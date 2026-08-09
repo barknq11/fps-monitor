@@ -1,5 +1,7 @@
 # Builds the distributable folder and zips it for a GitHub Release.
 #   powershell -ExecutionPolicy Bypass -File tools\build.ps1
+#   powershell -ExecutionPolicy Bypass -File tools\build.ps1 -Version v1.0.1
+param([string]$Version = 'v1.0.0')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -36,8 +38,7 @@ $size = (Get-ChildItem $app -Recurse -File | Measure-Object -Property Length -Su
 $count = (Get-ChildItem $app -Recurse -File | Measure-Object).Count
 Write-Output ('=== built: {0:N0} files, {1:N1} MB ===' -f $count, $size)
 
-$ver = 'v1.0.0'
-$zip = "$root\dist\FPS-Monitor-$ver-win64.zip"
+$zip = "$root\dist\FPS-Monitor-$Version-win64.zip"
 Write-Output "=== zipping to $zip ==="
 Compress-Archive -Path $app -DestinationPath $zip -Force
 $zipMb = (Get-Item $zip).Length / 1MB
