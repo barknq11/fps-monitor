@@ -108,6 +108,8 @@ class FPSMonitorApp:
         self.settings.driver_panel_requested.connect(self.open_driver_panel)
         self.settings.theme_changed.connect(self.on_theme_changed)
         self.settings.gpu_selected.connect(self.on_gpu_selected)
+        self.settings.open_logs_requested.connect(self._open_logs)
+        self.settings.refresh_runs()
         self.settings.shortcut_requested.connect(self.on_shortcut_requested)
         # theme is an app preference, not part of an overlay profile
         self.settings.set_theme(state.get("theme", "dark"))
@@ -305,10 +307,29 @@ class FPSMonitorApp:
 
     def toggle_benchmark(self) -> None:
         if self.recorder.active:
+            # Percentile lows come from every frame of the run, not from the
+            # 2 Hz sample stream, so hand the captured frame times over first.
+            target = self.last_game_exe
+            frames = self.fps.end_capture()
+            if frames:
+                pids = {
+                    p for p, _ in frames
+                } if not target else None
+                fts = [ft for _pid, ft in frames]
+                self.recorder.set_frametimes(fts)
             summary = self.recorder.stop()
             path = self.recorder.path or ""
-            msg = ", ".join(f"{k}={v}" for k, v in list(summary.items())[:6])
+            headline = []
+            for k in ("fps_avg_frames", "fps_1low", "fps_01low"):
+                if k in summary:
+                    headline.append(f"{k}={summary[k]}")
+            msg = ", ".join(headline or
+                            [f"{k}={v}" for k, v in list(summary.items())[:4]])
             self.settings.set_benchmark_active(False, f"Saved {path}\n{msg}")
+            try:
+                self.settings.refresh_runs()
+            except Exception:
+                pass
             self.tray.showMessage(
                 APP_NAME, f"Benchmark saved\n{os.path.basename(path)}\n{msg}",
                 QSystemTrayIcon.MessageIcon.Information, 6000,
@@ -316,6 +337,7 @@ class FPSMonitorApp:
         else:
             app_hint = str(self.last_values.get("app", "")) if hasattr(self, "last_values") else ""
             app_hint = app_hint.replace(".exe", "")
+            self.fps.begin_capture()
             path = self.recorder.start(app_hint)
             self.settings.set_benchmark_active(True, f"Recording to {path}")
             self.tray.showMessage(
@@ -396,6 +418,13 @@ class FPSMonitorApp:
 
     def on_theme_changed(self, name: str) -> None:
         self._save_state(theme=name)
+
+    def _open_logs(self) -> None:
+        try:
+            os.makedirs(config.LOG_DIR, exist_ok=True)
+            os.startfile(config.LOG_DIR)  # noqa: S606
+        except Exception:
+            pass
 
     def on_gpu_selected(self, index) -> None:
         self.sensors.set_gpu(index)

@@ -236,6 +236,23 @@ class FPSBackend:
         self._retention = DEFAULT_RETENTION
         self.recovered_session: str | None = None
         self.uses_pm_timestamps = False
+        #: while a benchmark runs, every frame is kept so the summary can use
+        #: true percentiles instead of percentiles of a 2 Hz sample
+        self._capture: list[tuple[int, float]] | None = None
+
+    def begin_capture(self) -> None:
+        with self._lock:
+            self._capture = []
+
+    def end_capture(self) -> list[tuple[int, float]]:
+        with self._lock:
+            got = self._capture or []
+            self._capture = None
+            return got
+
+    @property
+    def capturing(self) -> bool:
+        return self._capture is not None
 
     def set_retention(self, seconds: float) -> None:
         """Keep at least `seconds` of frame history (for the graph window)."""
@@ -418,6 +435,8 @@ class FPSBackend:
                     st = _Stream(name, pid, self._retention)
                     self._streams[pid] = st
                 st.add(ft, pm_time)
+                if self._capture is not None:
+                    self._capture.append((pid, ft))
 
     def _reap(self) -> None:
         """Forget processes that are long gone.

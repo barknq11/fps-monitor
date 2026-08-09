@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -109,6 +111,7 @@ class SettingsWindow(QWidget):
     driver_panel_requested = Signal()
     theme_changed = Signal(str)
     gpu_selected = Signal(object)        # index, or None for the first GPU
+    open_logs_requested = Signal()
     shortcut_requested = Signal(bool)    # True = create, False = remove
 
     def __init__(self, profile: dict[str, Any], status_provider: Callable[[], str]):
@@ -200,6 +203,8 @@ class SettingsWindow(QWidget):
                        self._build_behaviour_tab())
         self._add_page("FPS limiter", "Cap the frame rate through RivaTuner.",
                        self._build_limiter_tab())
+        self._add_page("Benchmarks", "Past runs, and comparisons between them.",
+                       self._build_benchmark_tab())
         self._add_page("Profiles", "Save and switch complete configurations.",
                        self._build_profiles_tab())
 
@@ -800,6 +805,162 @@ class SettingsWindow(QWidget):
         outer.addWidget(gb2)
         outer.addStretch(1)
         return w
+
+    def _build_benchmark_tab(self) -> QWidget:
+        w = QWidget()
+        outer = QVBoxLayout(w)
+
+        intro = QLabel(
+            "Every recording is saved to the logs folder. Select a run to see "
+            "its numbers, or tick two to compare them - useful for judging "
+            "whether a settings change actually helped."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("SectionHint")
+        outer.addWidget(intro)
+
+        cols = QHBoxLayout()
+        outer.addLayout(cols, 1)
+
+        left = QVBoxLayout()
+        left.addWidget(QLabel("<b>Runs</b>"))
+        self.run_list = QListWidget()
+        self.run_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self.run_list.itemSelectionChanged.connect(self._show_selected_runs)
+        left.addWidget(self.run_list)
+        brow = QHBoxLayout()
+        b_refresh = QPushButton("Refresh")
+        b_open = QPushButton("Open folder")
+        b_delete = QPushButton("Delete")
+        b_delete.setObjectName("Danger")
+        b_refresh.clicked.connect(self.refresh_runs)
+        b_open.clicked.connect(lambda: self.open_logs_requested.emit())
+        b_delete.clicked.connect(self._delete_runs)
+        for b in (b_refresh, b_open, b_delete):
+            brow.addWidget(b)
+        left.addLayout(brow)
+        cols.addLayout(left, 2)
+
+        right = QVBoxLayout()
+        right.addWidget(QLabel("<b>Results</b>"))
+        self.run_table = QTableWidget(0, 2)
+        self.run_table.setHorizontalHeaderLabels(["Metric", "Value"])
+        self.run_table.verticalHeader().setVisible(False)
+        self.run_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers
+        )
+        self.run_table.horizontalHeader().setStretchLastSection(True)
+        right.addWidget(self.run_table)
+        self.run_note = QLabel("Select a run on the left.")
+        self.run_note.setWordWrap(True)
+        self.run_note.setObjectName("SectionHint")
+        right.addWidget(self.run_note)
+        cols.addLayout(right, 3)
+        return w
+
+    # ---------------------------------------------------------- benchmarks
+    def refresh_runs(self) -> None:
+        from . import bench
+
+        self._runs = bench.load_runs()
+        self.run_list.clear()
+        for r in self._runs:
+            avg = r.value("fps_avg_frames") or r.value("fps_avg")
+            label = f"{r.app}   {r.when}"
+            if avg:
+                label += f"   {avg:.0f} FPS"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, r.path)
+            self.run_list.addItem(item)
+        if not self._runs:
+            self.run_note.setText(
+                "No recordings yet. Press the benchmark hotkey while a game "
+                "is running to make one."
+            )
+        self._show_selected_runs()
+
+    def _selected_runs(self) -> list:
+        paths = [
+            i.data(Qt.ItemDataRole.UserRole)
+            for i in self.run_list.selectedItems()
+        ]
+        return [r for r in getattr(self, "_runs", []) if r.path in paths]
+
+    def _delete_runs(self) -> None:
+        from . import bench
+
+        runs = self._selected_runs()
+        if not runs:
+            return
+        if QMessageBox.question(
+            self, "Delete runs",
+            f"Delete {len(runs)} recording(s)? This cannot be undone.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        for r in runs:
+            bench.delete_run(r.path)
+        self.refresh_runs()
+
+    def _show_selected_runs(self) -> None:
+        from . import bench
+
+        runs = self._selected_runs()
+        table = self.run_table
+
+        if not runs:
+            table.setRowCount(0)
+            table.setColumnCount(2)
+            table.setHorizontalHeaderLabels(["Metric", "Value"])
+            self.run_note.setText("Select a run, or two to compare them.")
+            return
+
+        if len(runs) > 2:
+            self.run_note.setText(
+                f"{len(runs)} runs selected. Showing the first two - "
+                f"comparisons are between a pair."
+            )
+            runs = runs[:2]
+        elif len(runs) == 2:
+            self.run_note.setText(
+                f"Comparing {runs[0].app} against {runs[1].app}. "
+                f"The change column is the second relative to the first."
+            )
+        else:
+            self.run_note.setText(f"{runs[0].name}")
+
+        if len(runs) == 1:
+            headers = ["Metric", runs[0].when or "Value"]
+        else:
+            headers = ["Metric", runs[0].when or "A", runs[1].when or "B",
+                       "Change"]
+        table.setColumnCount(len(headers))
+        table.setHorizontalHeaderLabels(headers)
+        table.setRowCount(0)
+
+        for key, label, unit, higher_better in bench.REPORT_ROWS:
+            vals = [r.value(key) for r in runs]
+            if all(v is None for v in vals):
+                continue
+            row = table.rowCount()
+            table.insertRow(row)
+            table.setItem(row, 0, QTableWidgetItem(label))
+            for i, v in enumerate(vals):
+                text = "-" if v is None else f"{v:g}{unit}"
+                table.setItem(row, 1 + i, QTableWidgetItem(text))
+            if len(runs) == 2 and None not in vals and vals[0]:
+                delta = vals[1] - vals[0]
+                pct = delta / abs(vals[0]) * 100.0
+                cell = QTableWidgetItem(f"{delta:+.2f}{unit}  ({pct:+.1f}%)")
+                if abs(pct) >= 1.0:
+                    better = delta > 0 if higher_better else delta < 0
+                    cell.setForeground(
+                        QColor(theme.THEMES[self.theme_name].good if better
+                               else theme.THEMES[self.theme_name].bad)
+                    )
+                table.setItem(row, 3, cell)
+        table.resizeColumnsToContents()
 
     def _build_profiles_tab(self) -> QWidget:
         w = QWidget()
