@@ -370,6 +370,20 @@ def bootstrap() -> None:
             save_profile(new_profile(name, patch))
 
 
+def restore_presets() -> list[str]:
+    """Re-create the built-in profiles, overwriting edited copies.
+
+    Profiles the user created are untouched: only names that appear in
+    PRESETS (plus Default) are rewritten.
+    """
+    _ensure_dirs()
+    done = []
+    for name, patch in {"Default": {}, **PRESETS}.items():
+        save_profile(new_profile(name, patch or None))
+        done.append(name)
+    return done
+
+
 def load_state() -> dict[str, Any]:
     try:
         with open(STATE_FILE, encoding="utf-8") as fh:

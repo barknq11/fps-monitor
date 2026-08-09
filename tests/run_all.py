@@ -21,6 +21,7 @@ SUITES = [
     ("themes + Start Menu", "test_theme_shortcut.py"),
     ("DPI coordinate handling", "test_dpi.py"),
     ("GPU selection + battery", "test_hardware.py"),
+    ("hotkeys, search, geometry", "test_ui_polish.py"),
 ]
 
 results = []

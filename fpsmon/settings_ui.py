@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import config, metrics as M, theme
+from .widgets import HotkeyEdit
 
 POSITIONS = [
     ("Top left", "top_left"),
@@ -260,7 +261,16 @@ class SettingsWindow(QWidget):
 
         # available metrics, grouped
         left = QVBoxLayout()
-        left.addWidget(QLabel("<b>Available</b>"))
+        head = QHBoxLayout()
+        head.addWidget(QLabel("<b>Available</b>"))
+        head.addStretch(1)
+        self.metric_search = QLineEdit()
+        self.metric_search.setPlaceholderText("Search metrics...")
+        self.metric_search.setClearButtonEnabled(True)
+        self.metric_search.setFixedWidth(200)
+        self.metric_search.textChanged.connect(self._filter_metrics)
+        head.addWidget(self.metric_search)
+        left.addLayout(head)
         self.metric_list = QListWidget()
         self.metric_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         for group in M.GROUPS:
@@ -658,22 +668,25 @@ class SettingsWindow(QWidget):
 
         gb2 = QGroupBox("Hotkeys (global)")
         f2 = QFormLayout(gb2)
-        self.hk_toggle = QLineEdit()
-        self.hk_bench = QLineEdit()
-        self.hk_settings = QLineEdit()
-        self.hk_profile = QLineEdit()
-        for name, le in (
-            ("Show / hide overlay", self.hk_toggle),
-            ("Start / stop benchmark", self.hk_bench),
-            ("Open settings", self.hk_settings),
-            ("Next profile", self.hk_profile),
-        ):
-            le.setPlaceholderText("e.g. ctrl+alt+f")
-            le.editingFinished.connect(self._push)
-            f2.addRow(name, le)
-        hint = QLabel("Format: modifiers joined with +, e.g. ctrl+shift+f9. "
-                      "Changes apply immediately.")
-        hint.setWordWrap(True); hint.setStyleSheet("color:#888;")
+        self.hk_toggle = HotkeyEdit()
+        self.hk_bench = HotkeyEdit()
+        self.hk_settings = HotkeyEdit()
+        self.hk_profile = HotkeyEdit()
+        self._hotkey_widgets = {
+            "Show / hide overlay": self.hk_toggle,
+            "Start / stop benchmark": self.hk_bench,
+            "Open settings": self.hk_settings,
+            "Next profile": self.hk_profile,
+        }
+        for name, widget in self._hotkey_widgets.items():
+            widget.changed.connect(self._on_hotkey_changed)
+            f2.addRow(name, widget)
+        hint = QLabel(
+            "Click a button, then press the combination you want. Esc cancels, "
+            "Backspace clears it. Changes apply immediately."
+        )
+        hint.setWordWrap(True)
+        hint.setObjectName("SectionHint")
         f2.addRow("", hint)
         outer.addWidget(gb2)
 
@@ -802,6 +815,7 @@ class SettingsWindow(QWidget):
         b_save = QPushButton("Save current")
         b_new = QPushButton("Save as...")
         b_del = QPushButton("Delete")
+        b_del.setObjectName("Danger")
         b_load.clicked.connect(self._load_selected_profile)
         b_save.clicked.connect(self._save_current_profile)
         b_new.clicked.connect(self._save_as_profile)
@@ -809,6 +823,27 @@ class SettingsWindow(QWidget):
         for b in (b_load, b_save, b_new, b_del):
             row.addWidget(b)
         lay.addLayout(row)
+
+        reset_box = QGroupBox("Reset")
+        rlay = QVBoxLayout(reset_box)
+        rrow = QHBoxLayout()
+        b_reset_one = QPushButton("Reset this profile")
+        b_restore = QPushButton("Restore built-in presets")
+        b_reset_one.clicked.connect(self._reset_current_profile)
+        b_restore.clicked.connect(self._restore_presets)
+        rrow.addWidget(b_reset_one)
+        rrow.addWidget(b_restore)
+        rrow.addStretch(1)
+        rlay.addLayout(rrow)
+        rhint = QLabel(
+            "Resetting a profile returns its own settings to the defaults. "
+            "Restoring presets re-creates the shipped profiles (MangoHud, "
+            "RTSS Afterburner and the rest) without touching profiles you made."
+        )
+        rhint.setWordWrap(True)
+        rhint.setObjectName("SectionHint")
+        rlay.addWidget(rhint)
+        lay.addWidget(reset_box)
         self.refresh_profiles()
         return w
 
@@ -944,10 +979,10 @@ class SettingsWindow(QWidget):
         self.anchor_to_window.setChecked(bool(p.get("anchor_to_window", True)))
         self.extra_games.setText(", ".join(p.get("extra_games", [])))
         self.extra_non_games.setText(", ".join(p.get("extra_non_games", [])))
-        self.hk_toggle.setText(p["hotkey_toggle"])
-        self.hk_bench.setText(p["hotkey_benchmark"])
-        self.hk_settings.setText(p["hotkey_settings"])
-        self.hk_profile.setText(p["hotkey_cycle_profile"])
+        self.hk_toggle.set_combo(p["hotkey_toggle"])
+        self.hk_bench.set_combo(p["hotkey_benchmark"])
+        self.hk_settings.set_combo(p["hotkey_settings"])
+        self.hk_profile.set_combo(p["hotkey_cycle_profile"])
         self._loading = False
 
     @staticmethod
@@ -1024,10 +1059,10 @@ class SettingsWindow(QWidget):
 
         p["extra_games"] = _split(self.extra_games.text())
         p["extra_non_games"] = _split(self.extra_non_games.text())
-        p["hotkey_toggle"] = self.hk_toggle.text().strip().lower()
-        p["hotkey_benchmark"] = self.hk_bench.text().strip().lower()
-        p["hotkey_settings"] = self.hk_settings.text().strip().lower()
-        p["hotkey_cycle_profile"] = self.hk_profile.text().strip().lower()
+        p["hotkey_toggle"] = self.hk_toggle.combo()
+        p["hotkey_benchmark"] = self.hk_bench.combo()
+        p["hotkey_settings"] = self.hk_settings.combo()
+        p["hotkey_cycle_profile"] = self.hk_profile.combo()
         self.changed.emit(p)
 
     # ------------------------------------------------------------- profiles
@@ -1054,6 +1089,37 @@ class SettingsWindow(QWidget):
             self.refresh_profiles()
             self.set_status(f"Saved profile '{name.strip()}'")
 
+    def _reset_current_profile(self) -> None:
+        name = self.profile.get("name", "Default")
+        if QMessageBox.question(
+            self, "Reset profile",
+            f"Return \"{name}\" to the default settings?\n\n"
+            f"Its metrics, colours, layout and hotkeys will all be reset.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        fresh = config.new_profile(name)
+        self.profile.clear()
+        self.profile.update(fresh)
+        self.load_from_profile(self.profile)
+        config.save_profile(self.profile)
+        self.changed.emit(self.profile)
+        self.set_status(f"'{name}' reset to defaults.")
+
+    def _restore_presets(self) -> None:
+        if QMessageBox.question(
+            self, "Restore presets",
+            "Re-create the built-in profiles?\n\n"
+            "Profiles you created yourself are left alone. Built-in ones that "
+            "you have edited will be overwritten.",
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        restored = config.restore_presets()
+        self.refresh_profiles()
+        self.set_status(
+            f"Restored {len(restored)} preset(s): {', '.join(restored)}"
+            if restored else "Presets were already up to date."
+        )
+
     def _delete_profile(self) -> None:
         import os
 
@@ -1074,6 +1140,29 @@ class SettingsWindow(QWidget):
     def set_status(self, text: str) -> None:
         self.status.setText(text)
 
+    # ----------------------------------------------------------- geometry
+    def restore_geometry(self, geo: dict | None) -> None:
+        """Put the window back where it was, if that position still exists."""
+        if not geo:
+            return
+        try:
+            from PySide6.QtCore import QRect
+            from PySide6.QtGui import QGuiApplication
+
+            rect = QRect(int(geo["x"]), int(geo["y"]),
+                         int(geo["w"]), int(geo["h"]))
+            # a monitor may have been unplugged since last time
+            if any(s.geometry().intersects(rect) for s in QGuiApplication.screens()):
+                self.setGeometry(rect)
+            else:
+                self.resize(rect.width(), rect.height())
+        except Exception:
+            pass
+
+    def geometry_dict(self) -> dict:
+        g = self.geometry()
+        return {"x": g.x(), "y": g.y(), "w": g.width(), "h": g.height()}
+
     def set_limiter_status(self, text: str, limit: int | None = None) -> None:
         self.limit_status.setText(text)
         if limit is not None:
@@ -1086,6 +1175,54 @@ class SettingsWindow(QWidget):
 
     def set_shortcut_status(self, text: str) -> None:
         self.shortcut_status.setText(text)
+
+    def _filter_metrics(self, text: str) -> None:
+        """Filter the available list, hiding group headers left with no
+        matches so the list does not end up full of empty sections."""
+        needle = text.strip().lower()
+        visible_in_group: dict[int, bool] = {}
+        header_rows: list[int] = []
+        current_header = -1
+
+        for i in range(self.metric_list.count()):
+            item = self.metric_list.item(i)
+            mid = item.data(Qt.ItemDataRole.UserRole)
+            if not mid:
+                current_header = i
+                header_rows.append(i)
+                visible_in_group[i] = False
+                continue
+            metric = M.BY_ID.get(mid)
+            hay = " ".join(filter(None, [
+                item.text(), mid, metric.label if metric else "",
+                metric.group if metric else "",
+            ])).lower()
+            match = needle in hay if needle else True
+            item.setHidden(not match)
+            if match and current_header >= 0:
+                visible_in_group[current_header] = True
+
+        for row in header_rows:
+            self.metric_list.item(row).setHidden(not visible_in_group.get(row))
+
+    def _on_hotkey_changed(self, *_a) -> None:
+        """Flag duplicates: two actions on one combination means one of them
+        silently never fires."""
+        seen: dict[str, str] = {}
+        for label, widget in self._hotkey_widgets.items():
+            combo = widget.combo()
+            if not combo:
+                widget.set_warning("")
+                continue
+            if combo in seen:
+                widget.set_warning(f"Already used by \"{seen[combo]}\"")
+                self._hotkey_widgets[seen[combo]].set_warning(
+                    f"Already used by \"{label}\""
+                )
+            else:
+                seen[combo] = label
+                widget.set_warning("")
+        self._push()
 
     def _on_gpu_changed(self, *_a) -> None:
         if self._loading:

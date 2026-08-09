@@ -112,6 +112,7 @@ class FPSMonitorApp:
         # theme is an app preference, not part of an overlay profile
         self.settings.set_theme(state.get("theme", "dark"))
         self.settings.set_shortcut_status(shortcuts.status())
+        self.settings.restore_geometry(state.get("settings_geometry"))
         self.settings.set_status(self.status_text())
 
         icon = app_icon()
@@ -518,7 +519,10 @@ class FPSMonitorApp:
         try:
             self.profile["visible"] = self.overlay.isVisible()
             config.save_profile(self.profile)
-            self._save_state(active_profile=self.profile_name)
+            self._save_state(
+                active_profile=self.profile_name,
+                settings_geometry=self.settings.geometry_dict(),
+            )
         except Exception:
             pass
         if self.recorder.active:
