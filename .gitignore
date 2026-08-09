@@ -29,6 +29,8 @@ desktop.ini
 .*.kate-swp
 *~
 
-# Scratch scripts
-git_*.ps1
-tidy.ps1
+# Scratch scripts. tools/*.ps1 are the real, committed ones; anything loose
+# in the project root is throwaway.
+/*.ps1
+/probe_*.py
+/reorganize.py
