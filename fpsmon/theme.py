@@ -74,7 +74,20 @@ LIGHT = Palette(
 THEMES = {"dark": DARK, "light": LIGHT}
 
 
+def _glyphs(name: str) -> dict[str, str]:
+    """Absolute, QSS-safe paths to the arrow images for a theme."""
+    from .paths import resource
+
+    out = {}
+    for key in ("chevron", "up", "down"):
+        p = resource("assets", "ui", f"{key}_{name}.png")
+        # Qt stylesheets want forward slashes, and the path may contain spaces
+        out[key] = p.replace("\\", "/")
+    return out
+
+
 def build(p: Palette) -> str:
+    g = _glyphs(p.name)
     return f"""
 QWidget {{
     background: {p.bg};
@@ -196,10 +209,29 @@ QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QComboBox:focus, QFontComboBox:focus {{
     border: 1px solid {p.accent};
 }}
-QComboBox::drop-down, QFontComboBox::drop-down {{
-    border: none;
-    width: 22px;
+/* A dropdown must not look like a text field. It gets a divider and a
+   chevron, so the control announces that it opens a list. */
+QComboBox, QFontComboBox {{
+    padding-right: 30px;
 }}
+QComboBox::drop-down, QFontComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 26px;
+    border-left: 1px solid {p.border};
+    border-top-right-radius: 7px;
+    border-bottom-right-radius: 7px;
+    background: {p.hover};
+}}
+QComboBox::drop-down:hover, QFontComboBox::drop-down:hover {{
+    background: {p.accent};
+}}
+QComboBox::down-arrow, QFontComboBox::down-arrow {{
+    image: url("{g['chevron']}");
+    width: 14px;
+    height: 14px;
+}}
+QComboBox:disabled {{ color: {p.dim}; }}
 QComboBox QAbstractItemView {{
     background: {p.card};
     color: {p.text};
@@ -208,11 +240,36 @@ QComboBox QAbstractItemView {{
     selection-color: {p.on_accent};
     outline: 0;
 }}
-QSpinBox::up-button, QSpinBox::down-button,
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
-    width: 16px;
+/* Number fields get stepper arrows, so they read as "type or nudge a
+   value" rather than "pick from a list". */
+QSpinBox, QDoubleSpinBox {{ padding-right: 22px; }}
+QSpinBox::up-button, QDoubleSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
     border: none;
+    border-top-right-radius: 7px;
     background: transparent;
+}}
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
+    border: none;
+    border-bottom-right-radius: 7px;
+    background: transparent;
+}}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+    background: {p.hover};
+}}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    image: url("{g['up']}");
+    width: 9px; height: 9px;
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    image: url("{g['down']}");
+    width: 9px; height: 9px;
 }}
 
 /* ---------- buttons ---------- */

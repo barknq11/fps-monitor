@@ -46,6 +46,27 @@ if d != l:
 else:
     print("  both themes cover exactly the same rules")
 
+print("\n=== dropdown / number field glyphs ===")
+from fpsmon.paths import resource  # noqa: E402
+
+for name in theme.THEMES:
+    css = theme.stylesheet(name)
+    for key in ("chevron", "up", "down"):
+        path = resource("assets", "ui", f"{key}_{name}.png")
+        exists = os.path.exists(path)
+        referenced = path.replace("\\", "/") in css
+        print(f"  {name:<6} {key:<8} file={'ok' if exists else 'MISSING':<7} "
+              f"referenced in QSS={referenced}")
+        if not exists:
+            failures.append(f"{name}/{key}: glyph missing")
+        if not referenced:
+            failures.append(f"{name}/{key}: not referenced by the stylesheet")
+    # a combo must be visually distinguishable from a spin box
+    if "QComboBox::down-arrow" not in css:
+        failures.append(f"{name}: dropdowns have no arrow")
+    if "QSpinBox::up-arrow" not in css:
+        failures.append(f"{name}: number fields have no stepper arrows")
+
 print("\n=== contrast sanity (text vs background) ===")
 
 
@@ -82,8 +103,14 @@ w = SettingsWindow(config.load_profile("Default"), lambda: "status")
 w.resize(940, 700)
 w.show()
 app.processEvents()
+# the Graph page mixes dropdowns, number fields, colours and sliders, so it
+# is the page worth capturing for a visual check
+graph_page = next(
+    (i for i in range(w.nav.count()) if w.nav.item(i).text() == "Graph"), 0
+)
 for name in ("dark", "light"):
     w.set_theme(name)
+    w.nav.setCurrentRow(graph_page)
     app.processEvents()
     w.grab().save(os.path.join(PREVIEW_DIR, f"theme_{name}.png"))
     print(f"  {name}: applied, toggle reads {w.theme_toggle.text()!r}")
