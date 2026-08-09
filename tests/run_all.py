@@ -18,6 +18,7 @@ SUITES = [
     ("graph smoothness", "test_smooth.py"),
     ("history coverage", "test_coverage.py"),
     ("overlay, hotkeys, sensors", "test_fixes.py"),
+    ("themes + Start Menu", "test_theme_shortcut.py"),
 ]
 
 results = []

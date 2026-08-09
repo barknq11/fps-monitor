@@ -63,6 +63,21 @@ Settings has five tabs:
 Seven profiles ship by default: *Default*, *Minimal FPS*, *Afterburner style*,
 *MangoHud*, *Frametime analysis*, *Full telemetry*, *Benchmark bar*.
 
+## Themes and Windows integration
+
+The settings window has a **light and a dark theme** — the toggle is at the
+bottom of the sidebar, and the choice is remembered. Both themes are generated
+from one stylesheet so they cannot drift apart, and text contrast is checked
+against the WCAG AA 4.5:1 threshold by the test suite.
+
+The overlay's own colours stay per-profile: what reads well over a game is a
+different question from what reads well in a window.
+
+**Settings → Behaviour → Windows integration** adds a Start Menu entry, which
+is what lets Windows Search find the app when you type its name. It is a
+per-user shortcut — no installer, nothing system-wide — and Remove takes it
+back out.
+
 ## Frame-time graph and stutter
 
 **Settings → Graph** enables a graph that plots frame time — one point per

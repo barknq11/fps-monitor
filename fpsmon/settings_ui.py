@@ -106,6 +106,8 @@ class SettingsWindow(QWidget):
     limit_requested = Signal(str, int)   # target ("game"|"global"), fps
     limit_refresh_requested = Signal()
     driver_panel_requested = Signal()
+    theme_changed = Signal(str)
+    shortcut_requested = Signal(bool)    # True = create, False = remove
 
     def __init__(self, profile: dict[str, Any], status_provider: Callable[[], str]):
         super().__init__()
@@ -114,7 +116,8 @@ class SettingsWindow(QWidget):
         self._loading = False
         self.setWindowTitle("FPS Monitor")
         self.resize(940, 700)
-        self.setStyleSheet(theme.QSS)
+        self.theme_name = "dark"
+        self.setStyleSheet(theme.stylesheet(self.theme_name))
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -153,6 +156,16 @@ class SettingsWindow(QWidget):
         self.nav = QListWidget()
         self.nav.setObjectName("Nav")
         side_lay.addWidget(self.nav, 1)
+
+        foot = QWidget()
+        foot_lay = QVBoxLayout(foot)
+        foot_lay.setContentsMargins(12, 8, 12, 14)
+        self.theme_toggle = QPushButton()
+        self.theme_toggle.setObjectName("ThemeToggle")
+        self.theme_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.theme_toggle.clicked.connect(self._toggle_theme)
+        foot_lay.addWidget(self.theme_toggle)
+        side_lay.addWidget(foot)
         body.addWidget(side)
 
         # ---- content -----------------------------------------------------
@@ -190,6 +203,7 @@ class SettingsWindow(QWidget):
 
         self.nav.currentRowChanged.connect(self._on_nav)
         self.nav.setCurrentRow(0)
+        self.set_theme(self.theme_name)
 
         self.status = QLabel("")
         self.status.setObjectName("Status")
@@ -197,6 +211,24 @@ class SettingsWindow(QWidget):
         root.addWidget(self.status)
 
         self.load_from_profile(profile)
+
+    # -------------------------------------------------------------- theme
+    def set_theme(self, name: str) -> None:
+        """Apply a theme by name and refresh the toggle label."""
+        self.theme_name = name if name in theme.THEMES else "dark"
+        self.setStyleSheet(theme.stylesheet(self.theme_name))
+        if hasattr(self, "theme_toggle"):
+            going_to = "light" if self.theme_name == "dark" else "dark"
+            # plain text on purpose: symbol glyphs render inconsistently
+            # across Windows font fallbacks
+            self.theme_toggle.setText(f"Switch to {going_to} theme")
+            self.theme_toggle.setToolTip(
+                f"Currently {self.theme_name}. Click for {going_to}."
+            )
+
+    def _toggle_theme(self) -> None:
+        self.set_theme("light" if self.theme_name == "dark" else "dark")
+        self.theme_changed.emit(self.theme_name)
 
     # ------------------------------------------------------------- layout
     def _add_page(self, name: str, subtitle: str, widget: QWidget) -> None:
@@ -625,6 +657,35 @@ class SettingsWindow(QWidget):
         f2.addRow("", hint)
         outer.addWidget(gb2)
 
+        gb_win = QGroupBox("Windows integration")
+        fw = QVBoxLayout(gb_win)
+        self.shortcut_status = QLabel("")
+        self.shortcut_status.setWordWrap(True)
+        self.shortcut_status.setObjectName("SectionHint")
+        fw.addWidget(self.shortcut_status)
+        srow = QHBoxLayout()
+        self.shortcut_add = QPushButton("Add to Start Menu")
+        self.shortcut_remove = QPushButton("Remove")
+        self.shortcut_add.clicked.connect(
+            lambda: self.shortcut_requested.emit(True)
+        )
+        self.shortcut_remove.clicked.connect(
+            lambda: self.shortcut_requested.emit(False)
+        )
+        srow.addWidget(self.shortcut_add)
+        srow.addWidget(self.shortcut_remove)
+        srow.addStretch(1)
+        fw.addLayout(srow)
+        note_w = QLabel(
+            "Windows Search only finds programs that have a Start Menu entry. "
+            "This adds one for your account only - no installer, nothing "
+            "system-wide, and Remove takes it straight back out."
+        )
+        note_w.setWordWrap(True)
+        note_w.setObjectName("SectionHint")
+        fw.addWidget(note_w)
+        outer.addWidget(gb_win)
+
         gb3 = QGroupBox("Benchmark")
         f3 = QVBoxLayout(gb3)
         self.bench_btn = QPushButton("Start benchmark recording")
@@ -1002,6 +1063,9 @@ class SettingsWindow(QWidget):
 
     def set_driver_hint(self, text: str) -> None:
         self.driver_hint.setText(text)
+
+    def set_shortcut_status(self, text: str) -> None:
+        self.shortcut_status.setText(text)
 
     def set_benchmark_active(self, active: bool, info: str = "") -> None:
         self.bench_btn.setText(

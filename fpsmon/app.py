@@ -22,7 +22,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import (
     bench, config, focus, fps, limiter as limiter_mod, metrics as M, paths,
-    sensors,
+    sensors, shortcuts,
 )
 from .hotkeys import HotkeyManager
 from .limiter import FpsLimiter
@@ -105,6 +105,11 @@ class FPSMonitorApp:
         self.settings.limit_requested.connect(self.apply_fps_limit)
         self.settings.limit_refresh_requested.connect(self.refresh_limiter)
         self.settings.driver_panel_requested.connect(self.open_driver_panel)
+        self.settings.theme_changed.connect(self.on_theme_changed)
+        self.settings.shortcut_requested.connect(self.on_shortcut_requested)
+        # theme is an app preference, not part of an overlay profile
+        self.settings.set_theme(state.get("theme", "dark"))
+        self.settings.set_shortcut_status(shortcuts.status())
         self.settings.set_status(self.status_text())
 
         icon = app_icon()
@@ -379,6 +384,26 @@ class FPSMonitorApp:
             + ("" if panel else "\n\nThe control panel was not found on this PC.")
         )
 
+    def _save_state(self, **changes: Any) -> None:
+        """Merge into state.json rather than replacing it, so saving the
+        active profile does not discard the theme and vice versa."""
+        state = config.load_state()
+        state.update(changes)
+        config.save_state(state)
+
+    def on_theme_changed(self, name: str) -> None:
+        self._save_state(theme=name)
+
+    def on_shortcut_requested(self, create: bool) -> None:
+        ok, msg = shortcuts.create() if create else shortcuts.remove()
+        self.settings.set_shortcut_status(f"{shortcuts.status()}\n{msg}")
+        self.tray.showMessage(
+            APP_NAME, msg,
+            QSystemTrayIcon.MessageIcon.Information
+            if ok else QSystemTrayIcon.MessageIcon.Warning,
+            5000,
+        )
+
     def open_driver_panel(self) -> None:
         vendor = limiter_mod.gpu_vendor(self.sensors.gpu_name)
         ok, msg = limiter_mod.open_driver_panel(vendor)
@@ -415,7 +440,7 @@ class FPSMonitorApp:
         self._sync_retention()
         self.register_hotkeys()
         self._refresh_profiles_menu()
-        config.save_state({"active_profile": name})
+        self._save_state(active_profile=name)
         self.settings.set_status(f"Profile '{name}' loaded.  " + self.status_text())
 
     def cycle_profile(self) -> None:
@@ -474,7 +499,7 @@ class FPSMonitorApp:
         try:
             self.profile["visible"] = self.overlay.isVisible()
             config.save_profile(self.profile)
-            config.save_state({"active_profile": self.profile_name})
+            self._save_state(active_profile=self.profile_name)
         except Exception:
             pass
         if self.recorder.active:
