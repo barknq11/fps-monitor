@@ -1,10 +1,19 @@
 # Builds the distributable folder and zips it for a GitHub Release.
 #   powershell -ExecutionPolicy Bypass -File tools\build.ps1
 #   powershell -ExecutionPolicy Bypass -File tools\build.ps1 -Version v1.0.1
-param([string]$Version = 'v1.0.0')
+param([string]$Version = '')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+# Default to the version the app reports about itself, so a release can never
+# be tagged differently from what it tells the update check.
+if (-not $Version) {
+    $line = Select-String -Path "$root\fpsmon\__init__.py" -Pattern '__version__\s*=\s*"([^"]+)"'
+    if ($line) { $Version = 'v' + $line.Matches[0].Groups[1].Value }
+    else { $Version = 'v0.0.0' }
+}
+Write-Output "=== version: $Version ==="
 
 Write-Output '=== cleaning ==='
 Remove-Item "$root\build", "$root\dist" -Recurse -Force -ErrorAction SilentlyContinue

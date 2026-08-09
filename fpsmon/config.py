@@ -120,6 +120,11 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "visibility_mode": "game_running",
     # follow the focused game's window when it is not fullscreen
     "anchor_to_window": True,
+    "check_updates": True,     # ask GitHub for a newer release at startup
+    # Executables that should switch to this profile automatically, e.g.
+    # ["cs2.exe"]. First match wins; profiles with no entries never
+    # auto-activate.
+    "auto_for": [],
     "extra_non_games": [],     # user additions to the non-game list
     "extra_games": [],         # force these executables to count as games
     "visible": True,
@@ -368,6 +373,27 @@ def bootstrap() -> None:
     for name, patch in PRESETS.items():
         if not os.path.exists(profile_path(name)):
             save_profile(new_profile(name, patch))
+
+
+def profile_for_executable(exe: str) -> str | None:
+    """Which saved profile claims this game, if any.
+
+    Scanning the profile files rather than keeping an index means a profile
+    copied in by hand is picked up without any extra bookkeeping.
+    """
+    if not exe:
+        return None
+    want = os.path.basename(exe).lower()
+    for name in list_profiles():
+        try:
+            with open(profile_path(name), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:
+            continue
+        for pattern in data.get("auto_for") or []:
+            if str(pattern).strip().lower() == want:
+                return name
+    return None
 
 
 def restore_presets() -> list[str]:

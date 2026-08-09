@@ -14,15 +14,15 @@ import threading
 import traceback
 from typing import Any
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QObject, QTimer, Qt, Signal
 from PySide6.QtGui import (
     QAction, QColor, QGuiApplication, QIcon, QPainter, QPixmap,
 )
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from . import (
-    bench, config, focus, fps, limiter as limiter_mod, metrics as M, paths,
-    sensors, shortcuts,
+    __version__, bench, config, errors, focus, fps, limiter as limiter_mod,
+    metrics as M, paths, sensors, shortcuts, updates,
 )
 from .hotkeys import HotkeyManager
 from .limiter import FpsLimiter
@@ -63,6 +63,16 @@ def app_icon() -> QIcon:
 _make_icon = app_icon
 
 
+class _Bridge(QObject):
+    """Carries results from worker threads back onto the GUI thread.
+
+    Qt queues a signal emitted from another thread, which is the only safe
+    way to touch widgets from background work.
+    """
+
+    update_result = Signal(object, bool)
+
+
 class FPSMonitorApp:
     def __init__(self, qapp: QApplication):
         self.qapp = qapp
@@ -91,6 +101,11 @@ class FPSMonitorApp:
         self.last_foreground = focus.Foreground()
         self.last_game_exe = ""
         self._hardware_published = False
+        #: profile chosen by hand, restored when an auto-switched game exits
+        self._manual_profile: str | None = None
+        self._bridge = _Bridge()
+        self._bridge.update_result.connect(self._on_update_result)
+        self._update_result = self._bridge.update_result
 
         self.overlay = Overlay(self.profile)
         # The graph pulls its own data at its own frame rate.
@@ -109,7 +124,13 @@ class FPSMonitorApp:
         self.settings.theme_changed.connect(self.on_theme_changed)
         self.settings.gpu_selected.connect(self.on_gpu_selected)
         self.settings.open_logs_requested.connect(self._open_logs)
+        self.settings.update_check_requested.connect(
+            lambda: self.check_for_updates(manual=True)
+        )
+        self.settings.set_version(f"{__version__}")
         self.settings.refresh_runs()
+        if self.profile.get("check_updates", True):
+            QTimer.singleShot(3000, lambda: self.check_for_updates())
         self.settings.shortcut_requested.connect(self.on_shortcut_requested)
         # theme is an app preference, not part of an overlay profile
         self.settings.set_theme(state.get("theme", "dark"))
@@ -129,6 +150,12 @@ class FPSMonitorApp:
         self.timer = QTimer()
         self.timer.timeout.connect(self.tick)
         self.timer.start(int(float(self.profile["update_interval"]) * 1000))
+
+        # Surface problems instead of letting them vanish into a missing
+        # console, but only once per session so a repeating fault cannot
+        # spam notifications during a game.
+        self._error_notified = False
+        errors.add_listener(self._on_error_logged)
 
         self.hotkeys = HotkeyManager()
         self.hotkeys.set_action("toggle", self.toggle_overlay)
@@ -193,6 +220,9 @@ class FPSMonitorApp:
                     self.fps.candidates(), blocked, allowed
                 )
         if game_win is not None and game_win.exe:
+            if game_win.exe != self.last_game_exe:
+                self.last_game_exe = game_win.exe
+                self._auto_switch_profile(game_win.exe)
             self.last_game_exe = game_win.exe
 
         if mode == "always":
@@ -203,6 +233,11 @@ class FPSMonitorApp:
             show = focused_game
         else:                            # "game_running"
             show = game_win is not None
+
+        if game_win is None and self.last_game_exe:
+            # the game closed: hand the profile back to whatever was chosen
+            self.last_game_exe = ""
+            self._restore_manual_profile()
 
         if show and game_win is not None and p.get("anchor_to_window", True):
             screens = QGuiApplication.screens()
@@ -217,6 +252,33 @@ class FPSMonitorApp:
 
         if self.overlay.isVisible() != show:
             self.overlay.setVisible(show)
+
+    def _auto_switch_profile(self, exe: str) -> None:
+        """Adopt a profile that claims this game, if one does.
+
+        The profile the user picked by hand is remembered, so quitting the
+        game returns to it rather than leaving the game's layout behind.
+        """
+        try:
+            wanted = config.profile_for_executable(exe)
+        except Exception:
+            return
+        if wanted and wanted != self.profile_name:
+            if self._manual_profile is None:
+                self._manual_profile = self.profile_name
+            self.switch_profile(wanted)
+            self.tray.showMessage(
+                APP_NAME, f"{exe}: switched to the \"{wanted}\" profile",
+                QSystemTrayIcon.MessageIcon.Information, 3500,
+            )
+
+    def _restore_manual_profile(self) -> None:
+        if self._manual_profile and self._manual_profile != self.profile_name:
+            back = self._manual_profile
+            self._manual_profile = None
+            self.switch_profile(back)
+        else:
+            self._manual_profile = None
 
     def _sync_retention(self) -> None:
         """Keep enough frame history to fill the whole graph width."""
@@ -419,6 +481,57 @@ class FPSMonitorApp:
     def on_theme_changed(self, name: str) -> None:
         self._save_state(theme=name)
 
+    def _on_error_logged(self, summary: str) -> None:
+        if self._error_notified:
+            return
+        self._error_notified = True
+        try:
+            self.tray.showMessage(
+                APP_NAME,
+                f"Something went wrong and was written to the log.\n{summary}",
+                QSystemTrayIcon.MessageIcon.Warning, 7000,
+            )
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------ updates
+    def check_for_updates(self, manual: bool = False) -> None:
+        """Look for a newer release without blocking the UI.
+
+        Network work happens on a worker thread; the result is handed back
+        through a queued signal so the widgets are only touched on the GUI
+        thread.
+        """
+        if manual:
+            self.settings.set_update_status("Checking...")
+
+        def work() -> None:
+            try:
+                rel = updates.check()
+            except Exception:
+                rel = None
+            self._update_result.emit(rel, manual)
+
+        threading.Thread(target=work, daemon=True,
+                         name="fpsmon-update-check").start()
+
+    def _on_update_result(self, rel, manual: bool) -> None:
+        if rel is None:
+            if manual:
+                self.settings.set_update_status(
+                    f"You are on the latest version ({__version__}), or the "
+                    f"check could not reach GitHub."
+                )
+            return
+        msg = f"Version {rel.version} is available (you have {__version__})."
+        self.settings.set_update_status(
+            f'{msg} <a href="{rel.url}">Open the release page</a>'
+        )
+        self.tray.showMessage(
+            APP_NAME, msg + "\nSee Settings for the link.",
+            QSystemTrayIcon.MessageIcon.Information, 8000,
+        )
+
     def _open_logs(self) -> None:
         try:
             os.makedirs(config.LOG_DIR, exist_ok=True)
@@ -540,8 +653,9 @@ class FPSMonitorApp:
                 f"{APP_NAME} - {f:.0f} FPS" if f else
                 f"{APP_NAME} - GPU {values.get('gpu_load', 0):.0f}%"
             )
-        except Exception:
-            traceback.print_exc()
+        except Exception as exc:
+            # printing was pointless: a packaged build has no console
+            errors.report("update loop", exc)
 
     # ------------------------------------------------------------ shutdown
     def quit(self) -> None:
@@ -566,6 +680,7 @@ class FPSMonitorApp:
 
 def main() -> int:
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)
+    errors.install()
     qapp = QApplication(sys.argv)
     qapp.setQuitOnLastWindowClosed(False)
     qapp.setApplicationName(APP_NAME)

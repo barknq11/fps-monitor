@@ -112,6 +112,7 @@ class SettingsWindow(QWidget):
     theme_changed = Signal(str)
     gpu_selected = Signal(object)        # index, or None for the first GPU
     open_logs_requested = Signal()
+    update_check_requested = Signal()
     shortcut_requested = Signal(bool)    # True = create, False = remove
 
     def __init__(self, profile: dict[str, Any], status_provider: Callable[[], str]):
@@ -656,6 +657,36 @@ class SettingsWindow(QWidget):
         fg_.addRow("", self.battery_note)
         outer.addWidget(gb_gpu)
 
+        gb_upd = QGroupBox("About and updates")
+        fu = QFormLayout(gb_upd)
+        self.version_label = QLabel("")
+        fu.addRow("Version", self.version_label)
+        self.check_updates = QCheckBox(
+            "Check GitHub for a newer release when the app starts"
+        )
+        self.check_updates.toggled.connect(lambda *_: self._push())
+        fu.addRow("", self.check_updates)
+        urow = QHBoxLayout()
+        self.update_now = QPushButton("Check now")
+        self.update_now.clicked.connect(lambda: self.update_check_requested.emit())
+        urow.addWidget(self.update_now)
+        urow.addStretch(1)
+        fu.addRow("", urow)
+        self.update_status = QLabel("")
+        self.update_status.setWordWrap(True)
+        self.update_status.setOpenExternalLinks(True)
+        self.update_status.setObjectName("SectionHint")
+        fu.addRow("", self.update_status)
+        unote = QLabel(
+            "The check asks GitHub for the latest release tag and compares it "
+            "with this version. Nothing is downloaded or installed, and no "
+            "information about your machine is sent."
+        )
+        unote.setWordWrap(True)
+        unote.setObjectName("SectionHint")
+        fu.addRow("", unote)
+        outer.addWidget(gb_upd)
+
         gb = QGroupBox("Updates")
         f = QFormLayout(gb)
         self.update_interval = QDoubleSpinBox()
@@ -985,6 +1016,23 @@ class SettingsWindow(QWidget):
             row.addWidget(b)
         lay.addLayout(row)
 
+        auto_box = QGroupBox("Use this profile automatically")
+        alay = QVBoxLayout(auto_box)
+        self.auto_for = QLineEdit()
+        self.auto_for.setPlaceholderText("cs2.exe, eldenring.exe")
+        self.auto_for.editingFinished.connect(self._push)
+        alay.addWidget(self.auto_for)
+        ahint = QLabel(
+            "When one of these games starts, the overlay switches to this "
+            "profile on its own - a minimal readout for competitive games, "
+            "full telemetry for the rest. Leave it empty and the profile is "
+            "only ever selected by hand."
+        )
+        ahint.setWordWrap(True)
+        ahint.setObjectName("SectionHint")
+        alay.addWidget(ahint)
+        lay.addWidget(auto_box)
+
         reset_box = QGroupBox("Reset")
         rlay = QVBoxLayout(reset_box)
         rrow = QHBoxLayout()
@@ -1134,12 +1182,14 @@ class SettingsWindow(QWidget):
         self.locked.setChecked(bool(p["locked"]))
         self.update_interval.setValue(float(p["update_interval"]))
         self.only_in_game.setChecked(bool(p["only_in_game"]))
+        self.check_updates.setChecked(bool(p.get("check_updates", True)))
         self._set_combo(
             self.visibility_mode, p.get("visibility_mode", "game_running")
         )
         self.anchor_to_window.setChecked(bool(p.get("anchor_to_window", True)))
         self.extra_games.setText(", ".join(p.get("extra_games", [])))
         self.extra_non_games.setText(", ".join(p.get("extra_non_games", [])))
+        self.auto_for.setText(", ".join(p.get("auto_for", [])))
         self.hk_toggle.set_combo(p["hotkey_toggle"])
         self.hk_bench.set_combo(p["hotkey_benchmark"])
         self.hk_settings.set_combo(p["hotkey_settings"])
@@ -1212,6 +1262,7 @@ class SettingsWindow(QWidget):
         p["locked"] = self.locked.isChecked()
         p["update_interval"] = self.update_interval.value()
         p["only_in_game"] = self.only_in_game.isChecked()
+        p["check_updates"] = self.check_updates.isChecked()
         p["visibility_mode"] = self.visibility_mode.currentData()
         p["anchor_to_window"] = self.anchor_to_window.isChecked()
 
@@ -1220,6 +1271,7 @@ class SettingsWindow(QWidget):
 
         p["extra_games"] = _split(self.extra_games.text())
         p["extra_non_games"] = _split(self.extra_non_games.text())
+        p["auto_for"] = _split(self.auto_for.text())
         p["hotkey_toggle"] = self.hk_toggle.combo()
         p["hotkey_benchmark"] = self.hk_bench.combo()
         p["hotkey_settings"] = self.hk_settings.combo()
@@ -1389,6 +1441,12 @@ class SettingsWindow(QWidget):
         if self._loading:
             return
         self.gpu_selected.emit(self.gpu_select.currentData())
+
+    def set_version(self, text: str) -> None:
+        self.version_label.setText(text)
+
+    def set_update_status(self, text: str) -> None:
+        self.update_status.setText(text)
 
     def set_hardware(self, gpus: list[tuple[int, str]], current: int | None,
                      has_battery: bool) -> None:

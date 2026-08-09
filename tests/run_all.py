@@ -23,6 +23,7 @@ SUITES = [
     ("GPU selection + battery", "test_hardware.py"),
     ("hotkeys, search, geometry", "test_ui_polish.py"),
     ("benchmark lows + results", "test_benchmark.py"),
+    ("updates, auto-profiles, errors", "test_updates_errors.py"),
 ]
 
 results = []
