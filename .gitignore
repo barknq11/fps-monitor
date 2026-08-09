@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller
+build/
+dist/
+*.spec.bak
+
+# Generated at runtime - these are the user's own data, not source
+logs/
+state.json
+preview/
+
+# Profiles are created on first run from the built-in presets. Ship none.
+profiles/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+.*.kate-swp
+*~
+
+# Scratch scripts
+git_*.ps1
+tidy.ps1
