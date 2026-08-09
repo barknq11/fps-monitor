@@ -8,6 +8,7 @@ venv/
 # PyInstaller
 build/
 dist/
+dist-selftest/
 *.spec.bak
 
 # Generated at runtime - these are the user's own data, not source

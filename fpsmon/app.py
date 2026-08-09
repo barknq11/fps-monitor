@@ -20,7 +20,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
-from . import bench, config, focus, fps, limiter as limiter_mod, metrics as M, sensors
+from . import (
+    bench, config, focus, fps, limiter as limiter_mod, metrics as M, paths,
+    sensors,
+)
 from .hotkeys import HotkeyManager
 from .limiter import FpsLimiter
 from .overlay import Overlay
@@ -29,9 +32,7 @@ from .settings_ui import SettingsWindow
 APP_NAME = "FPS Monitor"
 
 
-ASSETS = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets"
-)
+ASSETS = paths.resource("assets")
 
 
 def app_icon() -> QIcon:

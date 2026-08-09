@@ -21,9 +21,9 @@ import threading
 import time
 from typing import Any
 
-VENDOR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vendor"
-)
+from .paths import resource
+
+VENDOR = resource("vendor")
 PRESENTMON = os.path.join(VENDOR, "PresentMon.exe")
 
 # Averaging window for the FPS / lows figures.

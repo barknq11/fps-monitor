@@ -294,6 +294,40 @@ after a couple of seconds. Motherboard (Super-I/O) and controller (SMBus)
 probing is disabled — it accounted for ~0.9 s and supplied nothing displayed
 here.
 
+## Building a release
+
+```
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
+```
+
+Produces `dist\FPS Monitor\` (~121 MB, 335 files), a zip of ~51 MB, and a
+SHA-256 file to publish beside the download.
+
+It is a **one-folder** build, not one-file. A one-file build unpacks itself to
+a temp directory on every launch, which would undo the work spent getting
+startup to ~1.1 s, and it triggers antivirus heuristics more often.
+
+The exe embeds `requireAdministrator`, so Windows elevates before the process
+starts — needed for PresentMon's ETW session and LibreHardwareMonitor's driver.
+
+To verify a build without a UAC prompt:
+
+```
+set FPSMON_SELFTEST=1
+python -m PyInstaller --noconfirm --clean --distpath dist-selftest FPSMonitor.spec
+"dist-selftest\FPS Monitor selftest\FPS Monitor selftest.exe" --selftest
+```
+
+That produces a console build with no elevation manifest and checks that the
+bundle can find `vendor/` and `assets/`, that pythonnet loads
+LibreHardwareMonitor, and that the data folder is writable.
+
+### Expect antivirus warnings
+
+An unsigned executable that loads a ring0 driver and opens ETW sessions looks
+like malware to heuristics. SmartScreen will warn until the download builds
+reputation. Publish the SHA-256, and sign the binary if you can.
+
 ## Requirements
 
 Python 3.11+, plus: `PySide6 pythonnet psutil keyboard pywin32`

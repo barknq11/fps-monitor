@@ -10,10 +10,14 @@ import json
 import os
 from typing import Any
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROFILE_DIR = os.path.join(ROOT, "profiles")
-LOG_DIR = os.path.join(ROOT, "logs")
-STATE_FILE = os.path.join(ROOT, "state.json")
+from .paths import data, data_dir
+
+# These are written at runtime, so they live in the data folder rather than
+# inside the bundle (which is read-only, and temporary for one-file builds).
+ROOT = data_dir()
+PROFILE_DIR = data("profiles")
+LOG_DIR = data("logs")
+STATE_FILE = data("state.json")
 
 # Bumped when metric ids change. Profiles carrying the current schema are
 # never migrated, so a preset can deliberately use a metric that an older

@@ -46,9 +46,9 @@ POSITIONS = [
 ]
 LAYOUTS = [("Rows", "rows"), ("Columns", "columns"), ("Single line", "compact")]
 
-ASSETS = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets"
-)
+from .paths import resource
+
+ASSETS = resource("assets")
 
 
 def _logo_pixmap(size: int):

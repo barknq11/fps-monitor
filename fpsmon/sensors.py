@@ -20,9 +20,9 @@ from typing import Any
 
 import psutil
 
-VENDOR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vendor"
-)
+from .paths import resource
+
+VENDOR = resource("vendor")
 
 _Computer = None
 LOAD_ERROR: str | None = None
