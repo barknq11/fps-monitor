@@ -107,6 +107,7 @@ class SettingsWindow(QWidget):
     limit_refresh_requested = Signal()
     driver_panel_requested = Signal()
     theme_changed = Signal(str)
+    gpu_selected = Signal(object)        # index, or None for the first GPU
     shortcut_requested = Signal(bool)    # True = create, False = remove
 
     def __init__(self, profile: dict[str, Any], status_provider: Callable[[], str]):
@@ -621,6 +622,25 @@ class SettingsWindow(QWidget):
         f0.addRow("Never treat as games", self.extra_non_games)
         outer.addWidget(gb0)
 
+        gb_gpu = QGroupBox("Hardware")
+        fg_ = QFormLayout(gb_gpu)
+        self.gpu_select = QComboBox()
+        self.gpu_select.currentIndexChanged.connect(self._on_gpu_changed)
+        fg_.addRow("Report GPU", self.gpu_select)
+        gpu_hint = QLabel(
+            "Only matters on machines with more than one GPU, such as laptops "
+            "with an integrated chip alongside a discrete card - the wrong one "
+            "reads as permanently idle."
+        )
+        gpu_hint.setWordWrap(True)
+        gpu_hint.setObjectName("SectionHint")
+        fg_.addRow("", gpu_hint)
+        self.battery_note = QLabel("")
+        self.battery_note.setWordWrap(True)
+        self.battery_note.setObjectName("SectionHint")
+        fg_.addRow("", self.battery_note)
+        outer.addWidget(gb_gpu)
+
         gb = QGroupBox("Updates")
         f = QFormLayout(gb)
         self.update_interval = QDoubleSpinBox()
@@ -1066,6 +1086,33 @@ class SettingsWindow(QWidget):
 
     def set_shortcut_status(self, text: str) -> None:
         self.shortcut_status.setText(text)
+
+    def _on_gpu_changed(self, *_a) -> None:
+        if self._loading:
+            return
+        self.gpu_selected.emit(self.gpu_select.currentData())
+
+    def set_hardware(self, gpus: list[tuple[int, str]], current: int | None,
+                     has_battery: bool) -> None:
+        """Populate the GPU picker and say whether battery metrics apply."""
+        self._loading = True
+        self.gpu_select.clear()
+        if gpus:
+            for idx, name in gpus:
+                self.gpu_select.addItem(name, idx)
+            want = current if current is not None else gpus[0][0]
+            pos = self.gpu_select.findData(want)
+            self.gpu_select.setCurrentIndex(max(0, pos))
+        else:
+            self.gpu_select.addItem("no GPU detected", None)
+        self.gpu_select.setEnabled(len(gpus) > 1)
+        self._loading = False
+        self.battery_note.setText(
+            "Battery metrics are available on this machine."
+            if has_battery else
+            "No battery detected, so the battery metrics will stay blank. "
+            "They are meant for laptops."
+        )
 
     def set_benchmark_active(self, active: bool, info: str = "") -> None:
         self.bench_btn.setText(

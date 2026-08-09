@@ -90,6 +90,7 @@ class FPSMonitorApp:
         self.limiter = FpsLimiter()
         self.last_foreground = focus.Foreground()
         self.last_game_exe = ""
+        self._hardware_published = False
 
         self.overlay = Overlay(self.profile)
         # The graph pulls its own data at its own frame rate.
@@ -106,6 +107,7 @@ class FPSMonitorApp:
         self.settings.limit_refresh_requested.connect(self.refresh_limiter)
         self.settings.driver_panel_requested.connect(self.open_driver_panel)
         self.settings.theme_changed.connect(self.on_theme_changed)
+        self.settings.gpu_selected.connect(self.on_gpu_selected)
         self.settings.shortcut_requested.connect(self.on_shortcut_requested)
         # theme is an app preference, not part of an overlay profile
         self.settings.set_theme(state.get("theme", "dark"))
@@ -394,6 +396,11 @@ class FPSMonitorApp:
     def on_theme_changed(self, name: str) -> None:
         self._save_state(theme=name)
 
+    def on_gpu_selected(self, index) -> None:
+        self.sensors.set_gpu(index)
+        self._save_state(gpu_index=index)
+        self.settings.set_status(self.status_text())
+
     def on_shortcut_requested(self, create: bool) -> None:
         ok, msg = shortcuts.create() if create else shortcuts.remove()
         self.settings.set_shortcut_status(f"{shortcuts.status()}\n{msg}")
@@ -476,6 +483,18 @@ class FPSMonitorApp:
             values: dict[str, Any] = self.sensors.read()
             values.update(self.fps.read())
             self.last_values = values
+
+            # The sensor backend opens on its own thread, so the hardware list
+            # is not known at startup; fill the picker in once it arrives.
+            if self.sensors.ready and not self._hardware_published:
+                self._hardware_published = True
+                saved = config.load_state().get("gpu_index")
+                if saved is not None:
+                    self.sensors.set_gpu(saved)
+                self.settings.set_hardware(
+                    self.sensors.gpus, self.sensors.gpu_index,
+                    self.sensors.has_battery,
+                )
 
             self._apply_visibility_and_anchor(values)
             self.overlay.set_values(values)

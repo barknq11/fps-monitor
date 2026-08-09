@@ -142,6 +142,82 @@ def foreground() -> Foreground:
     return fg
 
 
+class MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+        ("szDevice", ctypes.c_wchar * 32),
+    ]
+
+
+def _monitor_of(hwnd: int) -> MONITORINFOEXW | None:
+    """Physical bounds and device name of the monitor holding `hwnd`."""
+    if not _IS_WIN or not hwnd:
+        return None
+    try:
+        MONITOR_DEFAULTTONEAREST = 2
+        mon = _user32.MonitorFromWindow(
+            ctypes.c_void_p(hwnd), MONITOR_DEFAULTTONEAREST
+        )
+        mi = MONITORINFOEXW()
+        mi.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        if _user32.GetMonitorInfoW(ctypes.c_void_p(mon), ctypes.byref(mi)):
+            return mi
+    except Exception:
+        pass
+    return None
+
+
+def to_logical(fg: Foreground) -> tuple[int, int, int, int]:
+    """Convert a window's PHYSICAL pixel rect to Qt's logical coordinates.
+
+    Win32 reports real device pixels; Qt positions widgets in logical,
+    scale-independent ones. On a display at 125% those differ by a quarter,
+    so handing a Win32 rect straight to QWidget.move() puts the overlay
+    roughly a quarter of the screen away from the window it is meant to sit on.
+
+    The two coordinate systems are bridged per monitor: Windows and Qt agree on
+    the device name, so the window's offset within its monitor is divided by
+    that screen's device pixel ratio and re-based on Qt's origin for it.
+    """
+    rect = (fg.x, fg.y, fg.width, fg.height)
+    if not _IS_WIN or not fg.valid:
+        return rect
+    try:
+        from PySide6.QtGui import QGuiApplication
+    except Exception:
+        return rect
+
+    mi = _monitor_of(fg.hwnd)
+    if mi is None:
+        return rect
+
+    screens = QGuiApplication.screens()
+    if not screens:
+        return rect
+    screen = next((s for s in screens if s.name() == mi.szDevice), None)
+    if screen is None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return rect
+
+    dpr = float(screen.devicePixelRatio()) or 1.0
+    if dpr == 1.0:
+        return rect
+
+    geo = screen.geometry()          # logical
+    offset_x = fg.x - mi.rcMonitor.left     # physical offset within the monitor
+    offset_y = fg.y - mi.rcMonitor.top
+    return (
+        int(round(geo.x() + offset_x / dpr)),
+        int(round(geo.y() + offset_y / dpr)),
+        int(round(fg.width / dpr)),
+        int(round(fg.height / dpr)),
+    )
+
+
 def is_game(
     fg: Foreground,
     presenting_pids: set[int],
@@ -274,11 +350,13 @@ def find_game_window(
 def anchor_rect(
     fg: Foreground, screen_geo: tuple[int, int, int, int]
 ) -> tuple[int, int, int, int]:
-    """Rectangle the overlay should position itself within.
+    """Rectangle the overlay should position itself within, in Qt's logical
+    coordinates.
 
     The game's client area when it is windowed, the whole screen when it is
-    fullscreen (or when there is no usable window).
+    fullscreen (or when there is no usable window). `screen_geo` is already
+    logical because it comes from Qt.
     """
     if fg.valid and not fg.fullscreen:
-        return (fg.x, fg.y, fg.width, fg.height)
+        return to_logical(fg)
     return screen_geo

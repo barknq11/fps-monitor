@@ -133,6 +133,11 @@ class SensorBackend:
         self.available = False
         self.ready = False
         self.elevated = is_admin()
+        #: every GPU found, as (index, name); order is LibreHardwareMonitor's
+        self.gpus: list[tuple[int, str]] = []
+        #: which of them to report. None = the first one found.
+        self.gpu_index: int | None = None
+        self.has_battery = False
 
         # psutil static info is cheap and always available
         self.core_count = psutil.cpu_count(logical=False) or 0
@@ -163,15 +168,43 @@ class SensorBackend:
                 c.Open()
                 self._computer = c
                 self.available = True
-                for hw in c.Hardware:
+                gpus = []
+                for i, hw in enumerate(c.Hardware):
                     t = str(hw.HardwareType)
                     if t == "Cpu":
                         self.cpu_name = str(hw.Name)
                     elif t.startswith("Gpu"):
-                        self.gpu_name = str(hw.Name)
+                        gpus.append((i, str(hw.Name)))
+                self.gpus = gpus
+                if gpus:
+                    self.gpu_name = self._chosen_gpu_name()
             except Exception as exc:
                 globals()["LOAD_ERROR"] = f"open failed: {exc}"
+        try:
+            self.has_battery = psutil.sensors_battery() is not None
+        except Exception:
+            self.has_battery = False
         self.ready = True
+
+    def _chosen_gpu_name(self) -> str:
+        """Name of the GPU currently being reported."""
+        if not self.gpus:
+            return "GPU"
+        if self.gpu_index is not None:
+            for idx, name in self.gpus:
+                if idx == self.gpu_index:
+                    return name
+        return self.gpus[0][1]
+
+    def set_gpu(self, index: int | None) -> None:
+        """Choose which GPU to report on a multi-GPU machine.
+
+        Laptops in particular expose both an integrated and a discrete GPU,
+        and taking whichever LibreHardwareMonitor happens to list first
+        reports the idle one.
+        """
+        self.gpu_index = index
+        self.gpu_name = self._chosen_gpu_name()
 
     # -- lifecycle ---------------------------------------------------------
     def start(self) -> None:
@@ -218,14 +251,21 @@ class SensorBackend:
         out: dict[str, Any] = {}
 
         if self._computer is not None:
-            for hw in self._computer.Hardware:
+            want_gpu = self.gpu_index
+            if want_gpu is None and self.gpus:
+                want_gpu = self.gpus[0][0]
+            for i, hw in enumerate(self._computer.Hardware):
+                t = str(hw.HardwareType)
+                # Skip GPUs other than the selected one, so a laptop's idle
+                # integrated chip cannot overwrite the discrete one's readings.
+                if t.startswith("Gpu") and want_gpu is not None and i != want_gpu:
+                    continue
                 try:
                     hw.Update()
                     for sub in hw.SubHardware:
                         sub.Update()
                 except Exception:
                     continue
-                t = str(hw.HardwareType)
                 if t == "Cpu":
                     table, cores = CPU_MAP, True
                 elif t.startswith("Gpu"):
@@ -269,6 +309,19 @@ class SensorBackend:
             out.setdefault("ram_free", round(vm.available / (1024**3), 2))
             out.setdefault("ram_load", vm.percent)
             out["ram_total"] = self.ram_total_gb
+        except Exception:
+            pass
+
+        # --- battery (laptops only) ----------------------------------------
+        try:
+            batt = psutil.sensors_battery()
+            if batt is not None:
+                out["batt_pct"] = round(float(batt.percent), 1)
+                out["batt_plugged"] = 1.0 if batt.power_plugged else 0.0
+                secs = batt.secsleft
+                # psutil reports sentinels for "charging" and "unknown"
+                if isinstance(secs, int) and secs >= 0:
+                    out["batt_minutes"] = round(secs / 60.0)
         except Exception:
             pass
 

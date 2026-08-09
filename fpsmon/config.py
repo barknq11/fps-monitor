@@ -71,6 +71,7 @@ DEFAULT_PROFILE: dict[str, Any] = {
         "GPU": "#2E9762",
         "VRAM": "#AD64C1",
         "RAM": "#C26693",
+        "BATTERY": "#E8B84B",
     },
     # frame-time graph
     "graph_enabled": False,
@@ -200,6 +201,7 @@ PRESETS: dict[str, dict[str, Any]] = {
             "GPU": "#2E9762",
             "VRAM": "#AD64C1",
             "RAM": "#C26693",
+            "BATTERY": "#E8B84B",
         },
         "graph_enabled": True,
         "graph_seconds": 4.0,

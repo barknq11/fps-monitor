@@ -19,6 +19,8 @@ SUITES = [
     ("history coverage", "test_coverage.py"),
     ("overlay, hotkeys, sensors", "test_fixes.py"),
     ("themes + Start Menu", "test_theme_shortcut.py"),
+    ("DPI coordinate handling", "test_dpi.py"),
+    ("GPU selection + battery", "test_hardware.py"),
 ]
 
 results = []

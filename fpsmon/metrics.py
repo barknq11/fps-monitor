@@ -97,10 +97,16 @@ METRICS: list[Metric] = [
     Metric("ram_used", "RAM USED", "System RAM used", "GB", "RAM", _1),
     Metric("ram_free", "RAM FREE", "System RAM available", "GB", "RAM", _1,
            higher_is_worse=False, warn=4, crit=2),
+    # ---- battery (laptops; absent on desktops) ---------------------------
+    Metric("batt_pct", "BATT", "Battery charge", "%", "BATTERY", _i,
+           higher_is_worse=False, warn=25, crit=10),
+    Metric("batt_minutes", "BATT LEFT", "Battery time remaining", "min",
+           "BATTERY", _i, higher_is_worse=False, warn=30, crit=10),
+    Metric("batt_plugged", "AC", "On mains power (1 = yes)", "", "BATTERY", _i),
 ]
 
 BY_ID: dict[str, Metric] = {m.id: m for m in METRICS}
-GROUPS: list[str] = ["FPS", "CPU", "GPU", "VRAM", "RAM"]
+GROUPS: list[str] = ["FPS", "CPU", "GPU", "VRAM", "RAM", "BATTERY"]
 
 
 def format_value(metric: Metric, value: Any) -> str:
