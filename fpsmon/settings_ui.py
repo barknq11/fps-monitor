@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import config, metrics as M, theme
-from .widgets import HotkeyEdit
+from .widgets import HotkeyEdit, OverlayPreview
 
 POSITIONS = [
     ("Top left", "top_left"),
@@ -120,6 +120,7 @@ class SettingsWindow(QWidget):
         self.profile = profile
         self.status_provider = status_provider
         self._loading = False
+        self._previews: list = []
         self.setWindowTitle("FPS Monitor")
         self.resize(940, 700)
         self.theme_name = "dark"
@@ -316,9 +317,21 @@ class SettingsWindow(QWidget):
         cols.addLayout(right, 2)
         return w
 
+    def _preview_strip(self) -> QWidget:
+        """A live overlay, so colour and layout changes are visible here
+        instead of requiring an alt-tab into a game."""
+        box = QGroupBox("Preview")
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(6, 6, 6, 6)
+        preview = OverlayPreview(self.profile)
+        self._previews.append(preview)
+        lay.addWidget(preview)
+        return box
+
     def _build_appearance_tab(self) -> QWidget:
         w = QWidget()
         outer = QVBoxLayout(w)
+        outer.addWidget(self._preview_strip())
 
         gb_font = QGroupBox("Text")
         f = QFormLayout(gb_font)
@@ -408,6 +421,8 @@ class SettingsWindow(QWidget):
     def _build_graph_tab(self) -> QWidget:
         w = QWidget()
         outer = QVBoxLayout(w)
+
+        outer.addWidget(self._preview_strip())
 
         intro = QLabel(
             "The graph plots <b>frame time</b>, one point per presented frame. "
@@ -700,6 +715,11 @@ class SettingsWindow(QWidget):
         )
         self.only_in_game.toggled.connect(lambda *_: self._push())
         f.addRow("", self.only_in_game)
+        self.tray_shows_value = QCheckBox(
+            "Show the live FPS in the tray icon (GPU load when no game runs)"
+        )
+        self.tray_shows_value.toggled.connect(lambda *_: self._push())
+        f.addRow("", self.tray_shows_value)
         outer.addWidget(gb)
 
         gb2 = QGroupBox("Hotkeys (global)")
@@ -1183,6 +1203,7 @@ class SettingsWindow(QWidget):
         self.update_interval.setValue(float(p["update_interval"]))
         self.only_in_game.setChecked(bool(p["only_in_game"]))
         self.check_updates.setChecked(bool(p.get("check_updates", True)))
+        self.tray_shows_value.setChecked(bool(p.get("tray_shows_value", True)))
         self._set_combo(
             self.visibility_mode, p.get("visibility_mode", "game_running")
         )
@@ -1263,6 +1284,7 @@ class SettingsWindow(QWidget):
         p["update_interval"] = self.update_interval.value()
         p["only_in_game"] = self.only_in_game.isChecked()
         p["check_updates"] = self.check_updates.isChecked()
+        p["tray_shows_value"] = self.tray_shows_value.isChecked()
         p["visibility_mode"] = self.visibility_mode.currentData()
         p["anchor_to_window"] = self.anchor_to_window.isChecked()
 
@@ -1276,6 +1298,8 @@ class SettingsWindow(QWidget):
         p["hotkey_benchmark"] = self.hk_bench.combo()
         p["hotkey_settings"] = self.hk_settings.combo()
         p["hotkey_cycle_profile"] = self.hk_profile.combo()
+        for preview in self._previews:
+            preview.refresh(p)
         self.changed.emit(p)
 
     # ------------------------------------------------------------- profiles

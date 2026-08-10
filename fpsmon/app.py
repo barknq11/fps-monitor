@@ -63,6 +63,33 @@ def app_icon() -> QIcon:
 _make_icon = app_icon
 
 
+def number_icon(value: str, colour: str = "#e6e9ef") -> QIcon:
+    """Render a short number as a tray icon.
+
+    A 16px tray icon cannot show a logo and a number legibly at once, so
+    while something is being measured the number replaces the logo entirely,
+    the way Afterburner does it. Drawn at 64px and scaled by Windows.
+    """
+    pm = QPixmap(64, 64)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(10, 12, 16, 210))
+    p.drawRoundedRect(0, 0, 64, 64, 12, 12)
+
+    f = p.font()
+    f.setBold(True)
+    # three digits need to be smaller than two to stay inside the icon
+    f.setPointSize(34 if len(value) <= 2 else 26 if len(value) == 3 else 20)
+    p.setFont(f)
+    p.setPen(QColor(colour))
+    p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, value)
+    p.end()
+    return QIcon(pm)
+
+
 class _Bridge(QObject):
     """Carries results from worker threads back onto the GUI thread.
 
@@ -103,6 +130,7 @@ class FPSMonitorApp:
         self._hardware_published = False
         #: profile chosen by hand, restored when an auto-switched game exits
         self._manual_profile: str | None = None
+        self._tray_text = ""
         self._bridge = _Bridge()
         self._bridge.update_result.connect(self._on_update_result)
         self._update_result = self._bridge.update_result
@@ -481,6 +509,34 @@ class FPSMonitorApp:
     def on_theme_changed(self, name: str) -> None:
         self._save_state(theme=name)
 
+    def _update_tray(self, values: dict[str, Any]) -> None:
+        """Show the live figure in the tray icon itself.
+
+        Redrawn only when the displayed number changes: repainting a pixmap
+        and handing it to the shell twice a second regardless would be waste
+        for no visible difference.
+        """
+        fps = values.get("fps")
+        gpu = values.get("gpu_load")
+        if fps:
+            text, tip = f"{fps:.0f}", f"{APP_NAME} - {fps:.0f} FPS"
+            colour = "#3ddc84"
+        elif gpu is not None:
+            text, tip = f"{gpu:.0f}", f"{APP_NAME} - GPU {gpu:.0f}% (no game)"
+            colour = "#7ed0ff"
+        else:
+            text, tip, colour = "", f"{APP_NAME} - starting", ""
+
+        self.tray.setToolTip(tip)
+        if not self.profile.get("tray_shows_value", True):
+            if self._tray_text != "__logo__":
+                self._tray_text = "__logo__"
+                self.tray.setIcon(app_icon())
+            return
+        if text != self._tray_text:
+            self._tray_text = text
+            self.tray.setIcon(number_icon(text, colour) if text else app_icon())
+
     def _on_error_logged(self, summary: str) -> None:
         if self._error_notified:
             return
@@ -648,11 +704,7 @@ class FPSMonitorApp:
             if self.settings.isVisible():
                 self.settings.set_status(self.status_text())
 
-            f = values.get("fps")
-            self.tray.setToolTip(
-                f"{APP_NAME} - {f:.0f} FPS" if f else
-                f"{APP_NAME} - GPU {values.get('gpu_load', 0):.0f}%"
-            )
+            self._update_tray(values)
         except Exception as exc:
             # printing was pointless: a packaged build has no console
             errors.report("update loop", exc)

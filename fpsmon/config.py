@@ -121,6 +121,8 @@ DEFAULT_PROFILE: dict[str, Any] = {
     # follow the focused game's window when it is not fullscreen
     "anchor_to_window": True,
     "check_updates": True,     # ask GitHub for a newer release at startup
+    # show the live figure in the tray icon instead of the logo
+    "tray_shows_value": True,
     # Executables that should switch to this profile automatically, e.g.
     # ["cs2.exe"]. First match wins; profiles with no entries never
     # auto-activate.

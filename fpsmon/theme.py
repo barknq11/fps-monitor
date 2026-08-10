@@ -194,6 +194,14 @@ QGroupBox::title {{
     letter-spacing: 1px;
 }}
 
+/* Preview backdrop: a neutral dark panel regardless of theme, because the
+   overlay is designed to sit over game imagery, not over a light UI. */
+QWidget#PreviewStrip {{
+    background: #0a0c10;
+    border: 1px solid {p.border};
+    border-radius: 8px;
+}}
+
 /* ---------- inputs ---------- */
 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox {{
     background: {p.sunk};

@@ -24,6 +24,7 @@ SUITES = [
     ("hotkeys, search, geometry", "test_ui_polish.py"),
     ("benchmark lows + results", "test_benchmark.py"),
     ("updates, auto-profiles, errors", "test_updates_errors.py"),
+    ("live preview + tray icon", "test_preview_tray.py"),
 ]
 
 results = []

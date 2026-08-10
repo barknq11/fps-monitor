@@ -4,9 +4,13 @@ Custom controls for the settings window.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+import math
+import random
+import time
+
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QKeyEvent
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from .hotkeys import parse_combo
 
@@ -82,6 +86,109 @@ def key_event_to_combo(event: QKeyEvent) -> str | None:
 
     parts.append(name)
     return "+".join(parts)
+
+
+class OverlayPreview(QWidget):
+    """Live preview of the overlay, drawn by the real overlay widget.
+
+    Sample readings are plausible rather than real: the settings window is
+    not a game, so there are no frames to measure. The frame-time graph is
+    fed a synthetic stream so it animates exactly as it would in play.
+    """
+
+    SAMPLE = {
+        "fps": 144.0, "fps_1low": 118.0, "fps_01low": 96.0,
+        "frametime": 6.94, "frametime_max": 14.2, "frametime_med": 6.90,
+        "frametime_jitter": 0.42, "stutter_pct": 0.6, "app": "yourgame.exe",
+        "cpu_load": 48.0, "cpu_load_max": 71.0, "cpu_temp": 62.0,
+        "cpu_clock": 4050, "cpu_clock_avg": 3900, "cpu_power": 74.0,
+        "cpu_volt": 1.31,
+        "gpu_load": 96.0, "gpu_temp": 67.0, "gpu_hotspot": 82.0,
+        "gpu_mem_temp": 70.0, "gpu_clock": 2650.0, "gpu_mem_clock": 2400.0,
+        "gpu_power": 165.0, "gpu_fan_rpm": 1520.0, "gpu_fan_pct": 48.0,
+        "gpu_volt": 0.95, "gpu_mem_load": 38.0,
+        "vram_used": 7400.0, "vram_total": 16304.0, "vram_pct": 45.0,
+        "vram_used_gb": 7.2, "vram_total_gb": 15.9, "vram_free_gb": 8.7,
+        "ram_load": 58.0, "ram_used": 18.6, "ram_free": 13.3, "ram_total": 31.9,
+        "batt_pct": 76.0, "batt_minutes": 154.0, "batt_plugged": 0.0,
+    }
+
+    def __init__(self, profile: dict, parent=None):
+        super().__init__(parent)
+        self.setObjectName("PreviewStrip")
+        self.setMinimumHeight(90)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 12, 14, 12)
+
+        from .overlay import Overlay
+
+        self.overlay = Overlay(profile, parent=self, embedded=True)
+        self.overlay.set_series_provider(self._fake_series)
+        lay.addWidget(self.overlay, 0, Qt.AlignmentFlag.AlignTop
+                      | Qt.AlignmentFlag.AlignLeft)
+        lay.addStretch(1)
+
+        self._t0 = time.monotonic()
+        random.seed(11)
+        self.refresh(profile)
+
+        # keep the numbers gently moving so colour thresholds are visible
+        self._tick = QTimer(self)
+        self._tick.timeout.connect(self._nudge)
+        self._tick.start(700)
+
+    # ------------------------------------------------------------------
+    def _fake_series(self, seconds: float):
+        """A believable 144 FPS stream with the occasional hitch."""
+        now = time.monotonic()
+        out = []
+        t = now - seconds
+        i = 0
+        while t < now:
+            ft = 6.94 + 0.35 * math.sin((t - self._t0) * 2.2) \
+                + random.uniform(-0.25, 0.25)
+            if i % 260 == 259:
+                ft += random.uniform(8.0, 18.0)
+            out.append((t, ft))
+            t += ft / 1000.0
+            i += 1
+        return out
+
+    def _nudge(self) -> None:
+        if self.overlay.height() + 24 > self.minimumHeight():
+            margins = self.layout().contentsMargins()
+            self.setMinimumHeight(
+                self.overlay.height() + margins.top() + margins.bottom()
+            )
+            self.updateGeometry()
+        vals = dict(self.SAMPLE)
+        wobble = math.sin((time.monotonic() - self._t0) * 0.9)
+        vals["fps"] = round(144 + wobble * 12, 1)
+        vals["frametime"] = round(1000.0 / vals["fps"], 2)
+        vals["gpu_load"] = round(min(100, 92 + wobble * 6), 1)
+        vals["gpu_temp"] = round(67 + wobble * 4, 1)
+        vals["cpu_load"] = round(48 + wobble * 9, 1)
+        vals["cpu_temp"] = round(62 + wobble * 3, 1)
+        self.overlay.set_values(vals)
+
+    def refresh(self, profile: dict) -> None:
+        """Re-apply the profile after any settings change."""
+        self.overlay.apply_profile(profile)
+        self._nudge()
+        self.overlay.show()
+        # The overlay sizes itself to its content, so the strip has to follow
+        # or a tall profile is simply cut off. The settings page scrolls, so
+        # growing is fine; silently clipping the preview is not.
+        margins = self.layout().contentsMargins()
+        self.setMinimumHeight(
+            self.overlay.height() + margins.top() + margins.bottom()
+        )
+        self.updateGeometry()
+
+    def stop(self) -> None:
+        self._tick.stop()
+        self.overlay.close_hooks()
 
 
 class HotkeyEdit(QPushButton):

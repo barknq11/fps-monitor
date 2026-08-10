@@ -92,14 +92,23 @@ class Line:
 
 
 class Overlay(QWidget):
-    def __init__(self, profile: dict[str, Any]):
-        super().__init__(
-            None,
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-            | Qt.WindowType.WindowTransparentForInput,
-        )
+    def __init__(self, profile: dict[str, Any], parent: QWidget | None = None,
+                 embedded: bool = False):
+        """`embedded=True` makes this a plain child widget for the settings
+        preview: same painting and layout code, but no top-level window, no
+        click-through, no z-order juggling. Reusing the real renderer means
+        the preview cannot drift away from what actually draws on screen."""
+        self.embedded = embedded
+        if embedded:
+            super().__init__(parent)
+        else:
+            super().__init__(
+                None,
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.Tool
+                | Qt.WindowType.WindowTransparentForInput,
+            )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
@@ -135,11 +144,15 @@ class Overlay(QWidget):
         self.profile = profile
         self.apply_profile(profile)
 
-        # Backstop only: the WinEvent hook below does the real work.
-        self._raise_timer = QTimer(self)
-        self._raise_timer.timeout.connect(self._keep_on_top)
-        self._raise_timer.start(1000)
-        self._install_foreground_hook()
+        # Only a real overlay fights for z-order; the preview is a child
+        # widget and must not touch window ordering or install hooks.
+        self._winevent_hook = None
+        self._winevent_proc = None
+        if not embedded:
+            self._raise_timer = QTimer(self)
+            self._raise_timer.timeout.connect(self._keep_on_top)
+            self._raise_timer.start(1000)
+            self._install_foreground_hook()
 
         # Dedicated graph clock, decoupled from the sensor poll interval.
         self._graph_timer = QTimer(self)
@@ -287,6 +300,8 @@ class Overlay(QWidget):
             self._sync_graph_timer()
 
     def _set_click_through(self, enabled: bool) -> None:
+        if self.embedded:
+            return                        # a child widget has no window flags
         flags = self.windowFlags()
         if enabled:
             flags |= Qt.WindowType.WindowTransparentForInput
@@ -446,7 +461,12 @@ class Overlay(QWidget):
         """Resize/move only when values actually change (avoids flicker)."""
         if self.width() != w or self.height() != h:
             self.resize(w, h)
-        self._reposition()
+            if self.embedded:
+                # a child widget is placed by its layout, so it has to ask
+                self.setMinimumSize(w, h)
+                self.updateGeometry()
+        if not self.embedded:
+            self._reposition()
 
     def _assign_columns(self, lines: list[Line], cols: int) -> int:
         per_col = -(-len(lines) // cols) if lines else 1
@@ -515,7 +535,8 @@ class Overlay(QWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        self._apply_native_styles()
+        if not self.embedded:
+            self._apply_native_styles()
         self._sync_graph_timer()
 
     def hideEvent(self, event) -> None:  # noqa: N802
