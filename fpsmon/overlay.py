@@ -55,6 +55,7 @@ if _IS_WIN:
     _GWL_EXSTYLE = -20
     _WS_EX_NOACTIVATE = 0x08000000
     _WS_EX_TOOLWINDOW = 0x00000080
+    _WS_EX_TOPMOST = 0x00000008
     _EVENT_SYSTEM_FOREGROUND = 0x0003
     _WINEVENT_OUTOFCONTEXT = 0x0000
     try:
@@ -262,17 +263,35 @@ class Overlay(QWidget):
     def _is_above_foreground(hwnd: int) -> bool:
         """True if our window sits above the active window in z-order.
 
-        Walking up from the foreground window is cheap (our overlay is topmost,
-        so it is normally found within a couple of steps) and, unlike checking
-        GetTopWindow, it does not demand that we are the single frontmost
-        window on the whole desktop -- which we never are.
+        Windows keeps every WS_EX_TOPMOST window above every ordinary one, so
+        the common case needs no traversal at all: if we are topmost and the
+        focused window is not, we are already above it.
+
+        Walking the z-order was the original approach and it was wrong. The
+        chain above the focused window is as long as the user's desktop is
+        busy -- easily past any sane step limit -- so the walk kept giving up,
+        reporting "covered", and re-asserting the z-order on every check. That
+        is exactly the constant repositioning this method exists to avoid.
         """
         fg = _user32.GetForegroundWindow()
         if not fg:
             return True
         if int(fg) == hwnd:
             return True
-        w = ctypes.c_void_p(fg)
+
+        try:
+            ours = _get_exstyle(ctypes.c_void_p(hwnd), _GWL_EXSTYLE)
+            theirs = _get_exstyle(ctypes.c_void_p(int(fg)), _GWL_EXSTYLE)
+        except Exception:
+            return False
+        if not (ours & _WS_EX_TOPMOST):
+            return False                     # we lost topmost: fix it
+        if not (theirs & _WS_EX_TOPMOST):
+            return True                      # topmost always wins
+
+        # Both are topmost, so order matters. That set is small and sits at
+        # the very top of the z-order, making this walk short.
+        w = ctypes.c_void_p(int(fg))
         for _ in range(64):
             nxt = _user32.GetWindow(w, _GW_HWNDPREV)
             if not nxt:

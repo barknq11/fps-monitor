@@ -25,6 +25,7 @@ SUITES = [
     ("benchmark lows + results", "test_benchmark.py"),
     ("updates, auto-profiles, errors", "test_updates_errors.py"),
     ("live preview + tray icon", "test_preview_tray.py"),
+    ("theme surface separation", "test_theme_surfaces.py"),
 ]
 
 results = []

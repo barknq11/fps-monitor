@@ -31,6 +31,17 @@ class Palette:
     warn: str
     bad: str
     handle: str      # slider knob, scrollbar
+    # Buttons need their own surfaces. Using the hover colour as the resting
+    # fill left nothing for hover to change except the border, which is why
+    # the interface felt inert.
+    btn: str = ""
+    btn_hover: str = ""
+
+    def __post_init__(self):
+        if not self.btn:
+            object.__setattr__(self, "btn", self.hover)
+        if not self.btn_hover:
+            object.__setattr__(self, "btn_hover", self.border)
 
 
 DARK = Palette(
@@ -51,24 +62,35 @@ DARK = Palette(
     warn="#ffc400",
     bad="#ff4d4f",
     handle="#ffffff",
+    btn="#272f3b",
+    btn_hover="#343f4e",
 )
 
+# A light theme cannot be the dark one with the numbers flipped. In dark,
+# "recessed" reads as darker than its container; copying that literally made
+# inputs pure white on white cards, so a text field was invisible except for
+# its border. Here cards are the lightest surface and everything set into
+# them is progressively greyer, which is how depth reads on a light UI.
 LIGHT = Palette(
     name="light",
-    bg="#f4f6f9",
-    sunk="#ffffff",
-    card="#ffffff",
-    hover="#e9edf3",
-    border="#d3dae3",
-    text="#1a1f26",
-    dim="#5f6b7a",
+    bg="#eef1f6",          # window: clearly darker than a card
+    sunk="#eff2f7",        # inputs: set into the card, not level with it
+    card="#ffffff",        # raised surface, the lightest thing on screen
+    hover="#dfe5ee",       # obvious against both the window and a card
+    border="#c3ccd9",      # strong enough to define a field on its own
+    text="#171c24",
+    dim="#5a6675",
     accent="#2f6fe4",
     accent_dim="#2559b8",
     on_accent="#ffffff",
-    good="#1e9e5a",
-    warn="#b57d00",
-    bad="#d13438",
-    handle="#2f6fe4",
+    good="#1a8a4f",
+    warn="#a06a00",
+    bad="#c62828",
+    handle="#ffffff",
+    # distinct from BOTH the white card and the window, because buttons
+    # appear on each
+    btn="#dde4ef",
+    btn_hover="#c9d5e8",
 )
 
 THEMES = {"dark": DARK, "light": LIGHT}
@@ -213,9 +235,19 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QFontComboBox {{
     selection-background-color: {p.accent};
     selection-color: {p.on_accent};
 }}
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover,
+QComboBox:hover, QFontComboBox:hover {{
+    border-color: {p.dim};
+}}
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus,
 QComboBox:focus, QFontComboBox:focus {{
     border: 1px solid {p.accent};
+    background: {p.card};
+}}
+QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled,
+QComboBox:disabled {{
+    color: {p.dim};
+    background: transparent;
 }}
 /* A dropdown must not look like a text field. It gets a divider and a
    chevron, so the control announces that it opens a list. */
@@ -282,15 +314,31 @@ QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
 
 /* ---------- buttons ---------- */
 QPushButton {{
-    background: {p.hover};
+    background: {p.btn};
     border: 1px solid {p.border};
     border-radius: 7px;
     padding: 7px 14px;
     font-weight: 600;
     color: {p.text};
 }}
-QPushButton:hover {{ border-color: {p.accent}; }}
-QPushButton:pressed {{ background: {p.border}; }}
+QPushButton:hover {{
+    background: {p.btn_hover};
+    border-color: {p.accent};
+}}
+QPushButton:pressed {{
+    background: {p.accent};
+    border-color: {p.accent};
+    color: {p.on_accent};
+}}
+QPushButton:disabled {{
+    background: transparent;
+    color: {p.dim};
+    border-color: {p.border};
+}}
+/* Keyboard users get the same affordance as mouse users. */
+QPushButton:focus, QComboBox:focus, QListWidget:focus {{
+    border: 1px solid {p.accent};
+}}
 QPushButton#Primary {{
     background: {p.accent};
     border: 1px solid {p.accent};
