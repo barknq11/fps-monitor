@@ -1,7 +1,13 @@
 # Builds the distributable folder and zips it for a GitHub Release.
 #   powershell -ExecutionPolicy Bypass -File tools\build.ps1
 #   powershell -ExecutionPolicy Bypass -File tools\build.ps1 -Version v1.0.1
-param([string]$Version = '')
+param(
+    [string]$Version = '',
+    # A previous run can leave an elevated PresentMon.exe holding the old
+    # dist folder open, which cannot be removed from an ordinary shell.
+    # Building elsewhere gets a release out without waiting for a reboot.
+    [string]$DistName = 'dist'
+)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -16,7 +22,7 @@ if (-not $Version) {
 Write-Output "=== version: $Version ==="
 
 Write-Output '=== cleaning ==='
-Remove-Item "$root\build", "$root\dist" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item "$root\build", "$root\$DistName" -Recurse -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path "$root\assets\icon.ico")) {
     Write-Output 'assets\icon.ico missing - generating from the logo'
@@ -24,10 +30,10 @@ if (-not (Test-Path "$root\assets\icon.ico")) {
 }
 
 Write-Output '=== building (this takes a minute) ==='
-python -m PyInstaller --noconfirm --clean FPSMonitor.spec
+python -m PyInstaller --noconfirm --clean --distpath "$root\$DistName" FPSMonitor.spec
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
 
-$app = "$root\dist\FPS Monitor"
+$app = "$root\$DistName\FPS Monitor"
 if (-not (Test-Path "$app\FPS Monitor.exe")) { throw 'exe not produced' }
 
 Write-Output '=== bundled resources present? ==='
@@ -47,7 +53,7 @@ $size = (Get-ChildItem $app -Recurse -File | Measure-Object -Property Length -Su
 $count = (Get-ChildItem $app -Recurse -File | Measure-Object).Count
 Write-Output ('=== built: {0:N0} files, {1:N1} MB ===' -f $count, $size)
 
-$zip = "$root\dist\FPS-Monitor-$Version-win64.zip"
+$zip = "$root\$DistName\FPS-Monitor-$Version-win64.zip"
 Write-Output "=== zipping to $zip ==="
 Compress-Archive -Path $app -DestinationPath $zip -Force
 $zipMb = (Get-Item $zip).Length / 1MB
@@ -58,4 +64,4 @@ $hash = (Get-FileHash $zip -Algorithm SHA256).Hash
 Write-Output "  $hash"
 Set-Content -Path "$zip.sha256" -Value "$hash  $(Split-Path $zip -Leaf)"
 Write-Output ''
-Write-Output 'Done. Test dist\FPS Monitor\FPS Monitor.exe before publishing.'
+Write-Output "Done. Test $DistName\FPS Monitor\FPS Monitor.exe before publishing."

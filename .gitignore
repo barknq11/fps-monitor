@@ -34,3 +34,4 @@ desktop.ini
 /*.ps1
 /probe_*.py
 /reorganize.py
+dist-v11/
