@@ -26,6 +26,7 @@ SUITES = [
     ("updates, auto-profiles, errors", "test_updates_errors.py"),
     ("live preview + tray icon", "test_preview_tray.py"),
     ("theme surface separation", "test_theme_surfaces.py"),
+    ("graph CPU cost", "test_graph_cost.py"),
 ]
 
 results = []

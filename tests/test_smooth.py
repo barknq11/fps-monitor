@@ -201,6 +201,11 @@ class UnderRequesting(Overlay):
             self._series = self._series_provider(
                 float(self.profile.get("graph_seconds", 4.0))
             )
+            # The real tick maintains the presentation delay. Without it the
+            # render clock never falls behind, so the missing-left-edge bug
+            # cannot appear and the guard proves nothing.
+            self._update_lag()
+            self._gcache = None
         gx, gy, gwv, gh = self._graph_rect
         self.update(gx - 1, gy - 1, gwv + 2, gh + 2)
 

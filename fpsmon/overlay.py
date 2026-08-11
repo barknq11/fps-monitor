@@ -128,6 +128,8 @@ class Overlay(QWidget):
         # arrived, so the trace scrolls seamlessly.
         self._lag = 0.0
         self._lag_samples: list[tuple[float, float]] = []  # (when, observed lag)
+        self._last_fetch = 0.0
+        self._gcache: dict | None = None
         self._drag_from: QPoint | None = None
         self._lines: list[Line] = []
         self._sticky_w: dict[str, int] = {}
@@ -177,11 +179,19 @@ class Overlay(QWidget):
         elif self._graph_timer.isActive():
             self._graph_timer.stop()
 
+    #: How often new frame data is pulled. Frames arrive in bursts about once
+    #: a second, so fetching at the redraw rate meant locking the capture
+    #: backend and rebuilding a 700-item list sixty times a second to get the
+    #: same answer. Scrolling in between is a pure translation.
+    FETCH_INTERVAL = 0.1
+
     def _tick_graph(self) -> None:
         """Repaint only the graph strip, at the graph's own frame rate."""
         if self._graph_rect is None or not self.isVisible():
             return
-        if self._series_provider is not None:
+        now = time.monotonic()
+        if (self._series_provider is not None
+                and now - self._last_fetch >= self.FETCH_INTERVAL):
             try:
                 # The graph draws behind real time by self._lag, so the window
                 # it shows is [now-lag-window, now-lag]. Requesting only
@@ -192,6 +202,9 @@ class Overlay(QWidget):
                 self._series = self._series_provider(window + self._lag + 0.5)
             except Exception:
                 self._series = []
+            self._last_fetch = now
+            self._update_lag()
+            self._gcache = None          # data moved: the path must be rebuilt
         gx, gy, gw, gh = self._graph_rect
         self.update(QRect(gx - 1, gy - 1, gw + 2, gh + 2))
 
@@ -691,18 +704,21 @@ class Overlay(QWidget):
                          title)
         painter.setFont(self.font_main)
 
-    def _render_clock(self, series: list[tuple[float, float]]) -> float:
-        """The time the graph is currently drawing, held behind real time.
+    def _update_lag(self) -> None:
+        """Track how far behind real time the graph must draw.
 
-        The delay tracks how stale the newest frame typically is, so it adapts
-        to whatever cadence PresentMon happens to deliver at. Without it the
-        rightmost part of the graph is always empty and then fills in a jump
-        when the next burst lands.
+        The delay covers how stale the newest frame typically is, so it adapts
+        to whatever cadence PresentMon delivers at. Without it the rightmost
+        part of the graph is always empty and then fills in a jump when the
+        next burst lands.
+
+        Only recalculated when new data arrives; doing it per repaint meant a
+        list scan sixty times a second to track a value that changes once.
         """
         now = time.monotonic()
-        if not series:
-            return now - self._lag
-        observed = now - series[-1][0]
+        if not self._series:
+            return
+        observed = now - self._series[-1][0]
         self._lag_samples.append((now, observed))
         cutoff = now - 3.0
         while self._lag_samples and self._lag_samples[0][0] < cutoff:
@@ -712,9 +728,12 @@ class Overlay(QWidget):
         target = max(v for _t, v in self._lag_samples) * 1.15 + 0.03
         target = max(0.05, min(target, 2.0))
         # Grow quickly (running dry would stall the trace), shrink slowly.
-        k = 0.30 if target > self._lag else 0.01
+        k = 0.30 if target > self._lag else 0.06
         self._lag += (target - self._lag) * k
-        return now - self._lag
+
+    def _render_clock(self, series: list[tuple[float, float]]) -> float:
+        """The time the graph is currently drawing."""
+        return time.monotonic() - self._lag
 
     def _graph_points(
         self, gw: int, window: float
@@ -755,6 +774,8 @@ class Overlay(QWidget):
                 if ms > bins.get(k, 0.0):
                     bins[k] = ms
             pts = [(float(k), v) for k, v in sorted(bins.items())]
+        # (kept for tests and the non-cached path; the live renderer uses
+        #  _build_graph_cache, which decimates in time rather than in pixels)
 
         # Carry the newest frame out to the right edge. PresentMon delivers in
         # bursts, so the last known frame can be a fraction of a second old;
@@ -762,6 +783,172 @@ class Overlay(QWidget):
         if pts and pts[-1][0] < gw:
             pts.append((float(gw), pts[-1][1]))
         return pts
+
+    def _build_graph_cache(self, gx, gy, gw, gh, window, alpha):
+        """Build the trail once per data update instead of once per frame.
+
+        The x axis is time, so between updates scrolling is a pure horizontal
+        translation of the same geometry -- there is nothing to recompute.
+        Decimation buckets by absolute time rather than by screen column: a
+        pixel-column bucket shifts as the trail scrolls, which made spikes
+        jump between adjacent columns and flicker.
+        """
+        p = self.profile
+        series = self._series
+        render_now = time.monotonic() - self._lag
+        pps = gw / window if window else 1.0
+
+        # One bucket per pixel column. A line cannot show two values in the
+        # same column, and measurement showed the extra points were most of
+        # the drawing cost. Each bucket keeps its worst frame, so decimating
+        # never hides a spike.
+        bucket = window / max(1.0, float(gw))
+        buckets: dict[int, float] = {}
+        for ts, ms in series:
+            age = render_now - ts
+            if age < -0.5 or age > window + 0.5:
+                continue
+            k = int(ts / bucket)
+            if ms > buckets.get(k, 0.0):
+                buckets[k] = ms
+        if len(buckets) < 2:
+            return None
+
+        pts = [(k * bucket, v) for k, v in sorted(buckets.items())]
+        values = [v for _t, v in pts]
+        ordered = sorted(values)
+        med = ordered[len(ordered) // 2]
+
+        fixed = float(p.get("graph_max_ms", 0) or 0)
+        if fixed > 0:
+            top = fixed
+        else:
+            p98 = ordered[min(len(ordered) - 1, int(len(ordered) * 0.98))]
+            want = max(p98 * 1.35, med * 2.0, 16.7)
+            prev = getattr(self, "_graph_scale", want)
+            held = getattr(self, "_graph_scale_target", want)
+            if want > held * 1.12 or want < held * 0.80:
+                held = want
+            self._graph_scale_target = held
+            # eased at the data rate rather than the frame rate; the step is
+            # larger to compensate for running ~6x less often
+            top = prev + (held - prev) * (0.25 if held > prev else 0.08)
+        top = max(5.0, min(top, 200.0))
+        self._graph_scale = top
+
+        def x_of(ts):
+            return gx + gw - (render_now - ts) * pps
+
+        def y_of(ms):
+            return gy + gh - (min(ms, top) / top) * gh
+
+        path = QPainterPath()
+        path.moveTo(x_of(pts[0][0]), y_of(pts[0][1]))
+        for ts, ms in pts[1:]:
+            path.lineTo(x_of(ts), y_of(ms))
+        # Carry the newest value past the right edge so the gap that opens
+        # while scrolling between rebuilds is never visible.
+        overhang = gx + gw + pps * (self.FETCH_INTERVAL + 0.4)
+        path.lineTo(overhang, y_of(pts[-1][1]))
+
+        fill = None
+        if p.get("graph_fill", True):
+            fill = QPainterPath(path)
+            fill.lineTo(overhang, gy + gh)
+            fill.lineTo(x_of(pts[0][0]), gy + gh)
+            fill.closeSubpath()
+
+        spikes = []
+        if p.get("graph_show_spikes", True):
+            limit = max(
+                med * float(p.get("graph_spike_mult", 1.8)),
+                med + float(p.get("graph_spike_floor_ms", 5.0)),
+            )
+            spikes = [(x_of(ts), y_of(ms)) for ts, ms in pts if ms > limit]
+
+        return {
+            "path": path, "fill": fill, "spikes": spikes,
+            "top": top, "pps": pps, "t_ref": render_now,
+            "gx": gx, "gy": gy, "gw": gw, "gh": gh, "window": window,
+            "points": len(pts),
+        }
+
+    def _draw_cached_graph(self, painter: QPainter, cache: dict, alpha: int) -> None:
+        """Draw the prepared trail, shifted to the current moment.
+
+        Scrolling is the whole of the animation, and scrolling is a
+        translation, so nothing here recomputes geometry.
+        """
+        p = self.profile
+        gx, gy, gw, gh = cache["gx"], cache["gy"], cache["gw"], cache["gh"]
+        top = cache["top"]
+
+        if p.get("graph_guides", True):
+            painter.setPen(QPen(QColor(255, 255, 255, int(alpha * 0.18))))
+            for ms in (16.67, 33.33):
+                if ms < top:
+                    yy = int(gy + gh - (ms / top) * gh)
+                    painter.drawLine(gx, yy, gx + gw, yy)
+
+        col_line = QColor(p.get("graph_color", "#00FF66"))
+        col_line.setAlpha(alpha)
+        col_spike = QColor(p.get("graph_spike_color", "#FF3B30"))
+        col_spike.setAlpha(alpha)
+        width = max(1, int(p.get("graph_line_width", 2)))
+
+        dx = (time.monotonic() - self._lag - cache["t_ref"]) * cache["pps"]
+        painter.save()
+        painter.setClipRect(gx, gy, gw, gh)
+        painter.translate(-dx, 0)
+
+        if cache["fill"] is not None:
+            grad = QLinearGradient(0, gy, 0, gy + gh)
+            c0 = QColor(col_line); c0.setAlpha(int(alpha * 0.38))
+            c1 = QColor(col_line); c1.setAlpha(0)
+            grad.setColorAt(0.0, c0)
+            grad.setColorAt(1.0, c1)
+            painter.fillPath(cache["fill"], QBrush(grad))
+
+        if p.get("graph_trail", True):
+            lg = QLinearGradient(QPointF(gx + dx, 0), QPointF(gx + gw + dx, 0))
+            fade0 = QColor(col_line); fade0.setAlpha(int(alpha * 0.55))
+            fade1 = QColor(col_line); fade1.setAlpha(int(alpha * 0.80))
+            lg.setColorAt(0.0, fade0)
+            lg.setColorAt(0.45, fade1)
+            lg.setColorAt(1.0, col_line)
+            pen = QPen(QBrush(lg), width)
+        else:
+            pen = QPen(col_line, width)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawPath(cache["path"])
+
+        for sx, sy in cache["spikes"]:
+            sc = QColor(col_spike)
+            if p.get("graph_trail", True) and gw:
+                frac = max(0.0, min(1.0, (sx - dx - gx) / gw))
+                sc.setAlpha(int(alpha * (0.65 + 0.35 * frac)))
+            stem = QColor(sc)
+            stem.setAlpha(int(sc.alpha() * 0.45))
+            painter.setPen(QPen(stem, 1))
+            painter.drawLine(QPointF(sx, sy), QPointF(sx, float(gy + gh)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(sc))
+            painter.drawEllipse(QPointF(sx, sy), width * 0.9, width * 0.9)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.restore()
+
+        f = self._small_font()
+        painter.setFont(f)
+        fm = QFontMetrics(f)
+        painter.setPen(QPen(QColor(255, 255, 255, int(alpha * 0.5))))
+        label = f"{top:.1f} ms" if top < 100 else f"{top:.0f} ms"
+        if p.get("graph_scale_pos", "left") == "right":
+            painter.drawText(gx + gw + 6, gy + fm.ascent(), label)
+        elif p.get("graph_scale_pos", "left") != "none":
+            painter.drawText(gx + 2, gy + fm.ascent(), label)
+        painter.setFont(self.font_main)
 
     def _paint_graph(self, painter: QPainter, alpha: int) -> None:
         """Frame-time graph: one point per presented frame, scrolling in real
@@ -776,6 +963,16 @@ class Overlay(QWidget):
             bg = QColor(p["bg_color"])
             bg.setAlpha(int(255 * bg_op / 100))
             painter.fillRect(gx, gy, gw, gh, bg)
+
+        cache = self._gcache
+        if cache is None or (cache["gx"], cache["gy"], cache["gw"], cache["gh"],
+                             cache["window"]) != (gx, gy, gw, gh, window):
+            cache = self._build_graph_cache(gx, gy, gw, gh, window, alpha)
+            self._gcache = cache
+
+        if cache is not None and p.get("graph_style", "line") != "bars":
+            self._draw_cached_graph(painter, cache, alpha)
+            return
 
         pts = self._graph_points(gw, window)
         if len(pts) < 2:
