@@ -104,6 +104,7 @@ class SettingsWindow(QWidget):
     """Emits `changed` with the live profile whenever anything is edited."""
 
     changed = Signal(dict)
+    app_changed = Signal(dict)
     profile_switched = Signal(str)
     benchmark_toggled = Signal()
     limit_requested = Signal(str, int)   # target ("game"|"global"), fps
@@ -115,11 +116,20 @@ class SettingsWindow(QWidget):
     update_check_requested = Signal()
     shortcut_requested = Signal(bool)    # True = create, False = remove
 
-    def __init__(self, profile: dict[str, Any], status_provider: Callable[[], str]):
+    def __init__(self, profile: dict[str, Any], status_provider: Callable[[], str],
+                 app_settings: dict[str, Any] | None = None):
         super().__init__()
         self.profile = profile
+        # App-wide settings live apart from the profile so that switching
+        # profiles cannot change hotkeys or how the app behaves.
+        self.app = app_settings if app_settings is not None \
+            else config.load_app_settings()
         self.status_provider = status_provider
-        self._loading = False
+        # Building the widgets fires their change signals - adding items to a
+        # combo box counts as a change - and _push now writes app settings to
+        # disk. Without this guard construction would overwrite the saved
+        # settings with whatever the empty widgets happened to hold.
+        self._loading = True
         self._previews: list = []
         self.setWindowTitle("FPS Monitor")
         self.resize(940, 700)
@@ -219,6 +229,7 @@ class SettingsWindow(QWidget):
         self.status.setWordWrap(True)
         root.addWidget(self.status)
 
+        self._loading = False
         self.load_from_profile(profile)
 
     # -------------------------------------------------------------- theme
@@ -1200,21 +1211,22 @@ class SettingsWindow(QWidget):
         self.margin_x.setValue(int(p["margin_x"]))
         self.margin_y.setValue(int(p["margin_y"]))
         self.locked.setChecked(bool(p["locked"]))
-        self.update_interval.setValue(float(p["update_interval"]))
         self.only_in_game.setChecked(bool(p["only_in_game"]))
-        self.check_updates.setChecked(bool(p.get("check_updates", True)))
-        self.tray_shows_value.setChecked(bool(p.get("tray_shows_value", True)))
-        self._set_combo(
-            self.visibility_mode, p.get("visibility_mode", "game_running")
-        )
         self.anchor_to_window.setChecked(bool(p.get("anchor_to_window", True)))
-        self.extra_games.setText(", ".join(p.get("extra_games", [])))
-        self.extra_non_games.setText(", ".join(p.get("extra_non_games", [])))
         self.auto_for.setText(", ".join(p.get("auto_for", [])))
-        self.hk_toggle.set_combo(p["hotkey_toggle"])
-        self.hk_bench.set_combo(p["hotkey_benchmark"])
-        self.hk_settings.set_combo(p["hotkey_settings"])
-        self.hk_profile.set_combo(p["hotkey_cycle_profile"])
+
+        # --- app-wide, deliberately not read from the profile -------------
+        a = self.app
+        self.update_interval.setValue(float(a["update_interval"]))
+        self.check_updates.setChecked(bool(a["check_updates"]))
+        self.tray_shows_value.setChecked(bool(a["tray_shows_value"]))
+        self._set_combo(self.visibility_mode, a["visibility_mode"])
+        self.extra_games.setText(", ".join(a["extra_games"]))
+        self.extra_non_games.setText(", ".join(a["extra_non_games"]))
+        self.hk_toggle.set_combo(a["hotkey_toggle"])
+        self.hk_bench.set_combo(a["hotkey_benchmark"])
+        self.hk_settings.set_combo(a["hotkey_settings"])
+        self.hk_profile.set_combo(a["hotkey_cycle_profile"])
         self._loading = False
 
     @staticmethod
@@ -1281,25 +1293,30 @@ class SettingsWindow(QWidget):
         p["margin_x"] = self.margin_x.value()
         p["margin_y"] = self.margin_y.value()
         p["locked"] = self.locked.isChecked()
-        p["update_interval"] = self.update_interval.value()
         p["only_in_game"] = self.only_in_game.isChecked()
-        p["check_updates"] = self.check_updates.isChecked()
-        p["tray_shows_value"] = self.tray_shows_value.isChecked()
-        p["visibility_mode"] = self.visibility_mode.currentData()
         p["anchor_to_window"] = self.anchor_to_window.isChecked()
 
         def _split(text: str) -> list[str]:
             return [s.strip() for s in text.replace(";", ",").split(",") if s.strip()]
 
-        p["extra_games"] = _split(self.extra_games.text())
-        p["extra_non_games"] = _split(self.extra_non_games.text())
         p["auto_for"] = _split(self.auto_for.text())
-        p["hotkey_toggle"] = self.hk_toggle.combo()
-        p["hotkey_benchmark"] = self.hk_bench.combo()
-        p["hotkey_settings"] = self.hk_settings.combo()
-        p["hotkey_cycle_profile"] = self.hk_profile.combo()
+
+        # --- app-wide settings go to their own store ----------------------
+        a = self.app
+        a["update_interval"] = self.update_interval.value()
+        a["check_updates"] = self.check_updates.isChecked()
+        a["tray_shows_value"] = self.tray_shows_value.isChecked()
+        a["visibility_mode"] = self.visibility_mode.currentData()
+        a["extra_games"] = _split(self.extra_games.text())
+        a["extra_non_games"] = _split(self.extra_non_games.text())
+        a["hotkey_toggle"] = self.hk_toggle.combo()
+        a["hotkey_benchmark"] = self.hk_bench.combo()
+        a["hotkey_settings"] = self.hk_settings.combo()
+        a["hotkey_cycle_profile"] = self.hk_profile.combo()
         for preview in self._previews:
             preview.refresh(p)
+        config.save_app_settings(a)
+        self.app_changed.emit(a)
         self.changed.emit(p)
 
     # ------------------------------------------------------------- profiles

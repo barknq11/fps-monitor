@@ -27,6 +27,7 @@ SUITES = [
     ("live preview + tray icon", "test_preview_tray.py"),
     ("theme surface separation", "test_theme_surfaces.py"),
     ("graph CPU cost", "test_graph_cost.py"),
+    ("app vs profile settings", "test_settings_split.py"),
 ]
 
 results = []

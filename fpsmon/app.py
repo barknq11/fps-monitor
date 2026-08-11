@@ -108,12 +108,15 @@ class FPSMonitorApp:
         state = config.load_state()
         self.profile_name = state.get("active_profile", "Default")
         self.profile = config.load_profile(self.profile_name)
+        # Hotkeys, poll rate and visibility belong to the app, not to a look,
+        # so switching profiles cannot change them.
+        self.app_settings = config.load_app_settings()
 
         # Both backends open slowly (LibreHardwareMonitor ~2s, PresentMon spawns
         # a process and clears stale ETW sessions), so neither blocks the window
         # from appearing - they initialise on their own threads.
         self.sensors = sensors.SensorBackend(
-            interval=float(self.profile["update_interval"]), defer=True
+            interval=float(self.app_settings["update_interval"]), defer=True
         )
         self.sensors.start()
 
@@ -142,8 +145,11 @@ class FPSMonitorApp:
         if self.profile.get("visible", True):
             self.overlay.show()
 
-        self.settings = SettingsWindow(self.profile, self.status_text)
+        self.settings = SettingsWindow(
+            self.profile, self.status_text, self.app_settings
+        )
         self.settings.changed.connect(self.on_profile_changed)
+        self.settings.app_changed.connect(self.on_app_settings_changed)
         self.settings.profile_switched.connect(self.switch_profile)
         self.settings.benchmark_toggled.connect(self.toggle_benchmark)
         self.settings.limit_requested.connect(self.apply_fps_limit)
@@ -157,7 +163,7 @@ class FPSMonitorApp:
         )
         self.settings.set_version(f"{__version__}")
         self.settings.refresh_runs()
-        if self.profile.get("check_updates", True):
+        if self.app_settings.get("check_updates", True):
             QTimer.singleShot(3000, lambda: self.check_for_updates())
         self.settings.shortcut_requested.connect(self.on_shortcut_requested)
         # theme is an app preference, not part of an overlay profile
@@ -177,7 +183,7 @@ class FPSMonitorApp:
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.tick)
-        self.timer.start(int(float(self.profile["update_interval"]) * 1000))
+        self.timer.start(int(float(self.app_settings["update_interval"]) * 1000))
 
         # Surface problems instead of letting them vanish into a missing
         # console, but only once per session so a repeating fault cannot
@@ -223,7 +229,8 @@ class FPSMonitorApp:
             self.overlay.setVisible(False)
             return
 
-        mode = p.get("visibility_mode", "game_running")
+        a = self.app_settings
+        mode = a.get("visibility_mode", "game_running")
         if p.get("only_in_game", False) and mode == "always":
             mode = "rendering"          # honour the legacy option
 
@@ -231,9 +238,9 @@ class FPSMonitorApp:
         self.last_foreground = fg
         pids = self.fps.presenting_pids()
         blocked = set(focus.NON_GAMES) | {
-            s.lower() for s in p.get("extra_non_games", [])
+            s.lower() for s in a.get("extra_non_games", [])
         }
-        allowed = {s.lower() for s in p.get("extra_games", [])}
+        allowed = {s.lower() for s in a.get("extra_games", [])}
         focused_game = focus.is_game(fg, pids, blocked, allowed)
 
         # The game's own window, whether or not it currently has focus. This
@@ -528,7 +535,7 @@ class FPSMonitorApp:
             text, tip, colour = "", f"{APP_NAME} - starting", ""
 
         self.tray.setToolTip(tip)
-        if not self.profile.get("tray_shows_value", True):
+        if not self.app_settings.get("tray_shows_value", True):
             if self._tray_text != "__logo__":
                 self._tray_text = "__logo__"
                 self.tray.setIcon(app_icon())
@@ -641,10 +648,7 @@ class FPSMonitorApp:
         self.overlay.apply_profile(self.profile)
         self.overlay.setVisible(bool(self.profile.get("visible", True)))
         self.settings.load_from_profile(self.profile)
-        self.timer.setInterval(int(float(self.profile["update_interval"]) * 1000))
-        self.sensors.interval = float(self.profile["update_interval"])
         self._sync_retention()
-        self.register_hotkeys()
         self._refresh_profiles_menu()
         self._save_state(active_profile=name)
         self.settings.set_status(f"Profile '{name}' loaded.  " + self.status_text())
@@ -662,18 +666,23 @@ class FPSMonitorApp:
     def on_profile_changed(self, profile: dict[str, Any]) -> None:
         self.profile = profile
         self.overlay.apply_profile(profile)
-        self.timer.setInterval(int(float(profile["update_interval"]) * 1000))
-        self.sensors.interval = float(profile["update_interval"])
         self._sync_retention()
+
+    def on_app_settings_changed(self, app: dict[str, Any]) -> None:
+        """App-wide settings changed: these apply regardless of profile."""
+        self.app_settings = app
+        self.timer.setInterval(int(float(app["update_interval"]) * 1000))
+        self.sensors.interval = float(app["update_interval"])
         self.register_hotkeys()
 
     # ------------------------------------------------------------ hotkeys
     def register_hotkeys(self) -> None:
+        a = self.app_settings
         self.hotkeys.apply({
-            "toggle": self.profile.get("hotkey_toggle", ""),
-            "benchmark": self.profile.get("hotkey_benchmark", ""),
-            "settings": self.profile.get("hotkey_settings", ""),
-            "profile": self.profile.get("hotkey_cycle_profile", ""),
+            "toggle": a.get("hotkey_toggle", ""),
+            "benchmark": a.get("hotkey_benchmark", ""),
+            "settings": a.get("hotkey_settings", ""),
+            "profile": a.get("hotkey_cycle_profile", ""),
         })
 
     # ------------------------------------------------------------ main loop

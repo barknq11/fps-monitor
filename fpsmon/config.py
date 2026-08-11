@@ -137,6 +137,73 @@ DEFAULT_PROFILE: dict[str, Any] = {
     "hotkey_cycle_profile": "ctrl+alt+p",
 }
 
+# ---------------------------------------------------------------------------
+# Settings that belong to the application, not to a look.
+#
+# These used to live inside every profile, which meant a profile switching
+# automatically when a game started silently changed the user's hotkeys. A
+# profile should describe how the overlay looks; how the app behaves is a
+# separate thing that must stay put.
+# ---------------------------------------------------------------------------
+APP_KEYS = (
+    "hotkey_toggle",
+    "hotkey_benchmark",
+    "hotkey_settings",
+    "hotkey_cycle_profile",
+    "check_updates",
+    "tray_shows_value",
+    "visibility_mode",
+    "extra_games",
+    "extra_non_games",
+    "update_interval",
+)
+
+APP_DEFAULTS: dict[str, Any] = {
+    "hotkey_toggle": "ctrl+alt+f",
+    "hotkey_benchmark": "ctrl+alt+b",
+    "hotkey_settings": "ctrl+alt+s",
+    "hotkey_cycle_profile": "ctrl+alt+p",
+    "check_updates": True,
+    "tray_shows_value": True,
+    "visibility_mode": "game_running",
+    "extra_games": [],
+    "extra_non_games": [],
+    "update_interval": 0.5,
+}
+
+
+def load_app_settings() -> dict[str, Any]:
+    """App-wide settings, with a one-time lift out of the active profile.
+
+    Users upgrading from a version that stored these per profile keep the
+    hotkeys they had configured rather than silently reverting to defaults.
+    """
+    state = load_state()
+    app = copy.deepcopy(APP_DEFAULTS)
+    stored = state.get("app")
+    if isinstance(stored, dict):
+        app.update({k: v for k, v in stored.items() if k in APP_DEFAULTS})
+        return app
+
+    name = state.get("active_profile", "Default")
+    try:
+        with open(profile_path(name), encoding="utf-8") as fh:
+            old = json.load(fh)
+        for key in APP_KEYS:
+            if key in old:
+                app[key] = old[key]
+    except Exception:
+        pass
+    save_app_settings(app)
+    return app
+
+
+def save_app_settings(app: dict[str, Any]) -> None:
+    state = load_state()
+    state["app"] = {k: app.get(k, APP_DEFAULTS[k]) for k in APP_DEFAULTS}
+    save_state(state)
+
+
 PRESETS: dict[str, dict[str, Any]] = {
     "Minimal FPS": {
         "metrics": ["fps"],
@@ -339,10 +406,16 @@ def list_profiles() -> list[str]:
 
 
 def save_profile(profile: dict[str, Any]) -> str:
+    """Write a profile, leaving out anything that is an app-wide setting.
+
+    Keeping hotkeys out of the file is what stops a profile switch from
+    changing them.
+    """
     _ensure_dirs()
     path = profile_path(profile.get("name", "Default"))
+    body = {k: v for k, v in profile.items() if k not in APP_KEYS}
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(profile, fh, indent=2)
+        json.dump(body, fh, indent=2)
     return path
 
 
